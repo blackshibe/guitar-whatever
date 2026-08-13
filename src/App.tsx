@@ -536,23 +536,24 @@ export default function App() {
         const loop = loopLenFor(track, sec)
         const span = sec.endMeasure - sec.startMeasure + 1
         const loopSuffix = loop > 0 ? ` x${Math.ceil(span / loop)}` : ''
+        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => sec.startMeasure + off)
+        const isEmpty = measureIndices.every((m) =>
+          (track.measures[m] ?? []).every((col) => col.every((fret) => fret === null || fret === ''))
+        )
+        if (isEmpty) return
         parts.push(`== ${sec.name}${loopSuffix} ==`)
         if (sec.comment) parts.push(`# ${sec.comment}`)
-        const measureIndices = Array.from(
-          { length: loop > 0 ? loop : sec.endMeasure - sec.startMeasure + 1 },
-          (_, off) => sec.startMeasure + off
+        // One column width for the whole section: any 2-digit fret widens every column.
+        const width = Math.max(
+          2,
+          ...measureIndices.flatMap((m) =>
+            (track.measures[m] ?? []).map(
+              (col) => Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
+            )
+          )
         )
         chunkMeasures(measureIndices).forEach((lineMeasures) => {
           const lines = track.tuning.map((str) => midiToNoteName(stringMidi(str)).padEnd(2, ' ') + '|')
-          // One column width for the whole line: any 2-digit fret widens every column.
-          const width = Math.max(
-            2,
-            ...lineMeasures.flatMap((m) =>
-              (track.measures[m] ?? []).map(
-                (col) => Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
-              )
-            )
-          )
           lineMeasures.forEach((m) => {
             const measure = track.measures[m]
             if (!measure) return
