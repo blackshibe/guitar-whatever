@@ -125,9 +125,17 @@ export default function App() {
 
   const deleteMeasure = (m: number) => {
     if (measureCount <= 1) return
+    const newCount = measureCount - 1
     setTracks((prev) => prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => i !== m) })))
-    setMeasureCount((n) => n - 1)
-    setSections((prev) => dedupeSections(prev.map((s) => (s.startMeasure > m ? { ...s, startMeasure: s.startMeasure - 1 } : s))))
+    setMeasureCount(newCount)
+    setSections((prev) => {
+      const shifted = prev
+        .map((s) => (s.startMeasure > m ? { ...s, startMeasure: s.startMeasure - 1 } : s))
+        .map((s) => (s.startMeasure >= newCount ? { ...s, startMeasure: newCount - 1 } : s))
+      const deduped = dedupeSections(shifted).sort((a, b) => a.startMeasure - b.startMeasure)
+      if (deduped[0].startMeasure !== 0) deduped[0] = { ...deduped[0], startMeasure: 0 }
+      return deduped
+    })
     setSelected(null)
   }
 
@@ -137,11 +145,28 @@ export default function App() {
     setSections((prev) => [...prev, { id: nextId(), name: 'New Section', startMeasure: m, comment: '', repeat: 1 }])
   }
 
-  // Like addSectionAt, but if m falls past the last measure (e.g. splitting after
-  // the final section), a fresh measure is appended first so the section isn't empty.
+  // Start a new section at measure m. If m is past the end, or another section
+  // already starts there (splitting after a middle section), a fresh measure is
+  // inserted at m first — shifting later sections right — so the new section is
+  // never empty and never collides.
   const addSectionAfter = (m: number) => {
-    if (m >= measureCount) addMeasureAtEnd()
-    addSectionAt(m)
+    const collision = sections.some((s) => s.startMeasure === m)
+    if (m >= measureCount || collision) {
+      setTracks((prev) =>
+        prev.map((t) => {
+          const measures = t.measures.slice()
+          measures.splice(m, 0, ...makeMeasures(t.tuning.length, 1))
+          return { ...t, measures }
+        })
+      )
+      setMeasureCount((n) => n + 1)
+      setSections((prev) => [
+        ...prev.map((s) => (s.startMeasure >= m ? { ...s, startMeasure: s.startMeasure + 1 } : s)),
+        { id: nextId(), name: 'New Section', startMeasure: m, comment: '', repeat: 1 },
+      ])
+    } else {
+      addSectionAt(m)
+    }
   }
 
   const renameSection = (id: number, name: string) => {
@@ -185,6 +210,7 @@ export default function App() {
       const remaining = tracks.filter((t) => t.id !== id)
       setActiveTrackId(remaining[0]?.id)
     }
+    if (tuningEditorTrackId === id) setTuningEditorTrackId(null)
   }
 
   const renameTrack = (id: number, name: string) => updateTrack(id, (t) => ({ ...t, name }))
@@ -206,6 +232,7 @@ export default function App() {
   // ---- song lifecycle ----
   const clearAll = () => {
     if (!window.confirm('Clear the whole song? This removes all tracks and sections.')) return
+    stopPlayback()
     const blank = blankSong()
     setSongId(blank.id)
     setTitle(blank.title)
@@ -214,6 +241,7 @@ export default function App() {
     setTracks(blank.tracks)
     setActiveTrackId(blank.tracks[0].id)
     setSelected(null)
+    setTuningEditorTrackId(null)
   }
 
   const buildSnapshot = (): Song => ({
@@ -234,6 +262,7 @@ export default function App() {
   }
 
   const applySong = (song: Song) => {
+    stopPlayback()
     const maxId = Math.max(0, ...song.sections.map((s) => s.id), ...song.tracks.map((t) => t.id))
     advanceIdCounter(maxId)
     setSongId(song.id)
@@ -244,6 +273,7 @@ export default function App() {
     setTracks(song.tracks)
     setActiveTrackId(song.tracks[0]?.id)
     setSelected(null)
+    setTuningEditorTrackId(null)
   }
 
   const loadSongFromLibrary = (id: string) => {
@@ -259,6 +289,7 @@ export default function App() {
   }
 
   const newSong = () => {
+    stopPlayback()
     const blank = blankSong()
     setSongId(blank.id)
     setTitle(blank.title)
@@ -268,6 +299,7 @@ export default function App() {
     setTracks(blank.tracks)
     setActiveTrackId(blank.tracks[0].id)
     setSelected(null)
+    setTuningEditorTrackId(null)
   }
 
   // ---- keyboard editing (active track only) ----
@@ -280,7 +312,7 @@ export default function App() {
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault()
         const current = measure[c][s]
-        let next = current === null ? e.key : current + e.key
+        let next = current === null ? e.key : String(Number(current + e.key))
         if (next.length > 2 || Number(next) > 24) next = e.key
         setCell(activeTrack.id, m, c, s, next)
         return
@@ -379,8 +411,8 @@ export default function App() {
     tracks.forEach((track) => {
       parts.push(`-- ${track.name} --`)
       sectionRanges.forEach((sec) => {
-        const repeatSuffix = sec.repeat && sec.repeat > 1 ? ` [x${sec.repeat}]` : ''
-        parts.push(`== ${sec.name} (measures ${sec.startMeasure + 1}-${sec.endMeasure + 1})${repeatSuffix} ==`)
+        const repeatSuffix = sec.repeat && sec.repeat > 1 ? ` repeat x${sec.repeat}` : ''
+        parts.push(`== ${sec.name}${repeatSuffix} ==`)
         if (sec.comment) parts.push(`# ${sec.comment}`)
         const measureIndices = Array.from(
           { length: sec.endMeasure - sec.startMeasure + 1 },
@@ -392,9 +424,12 @@ export default function App() {
             const measure = track.measures[m]
             if (!measure) return
             measure.forEach((col) => {
+              // Column width tracks its widest fret label: 2-digit frets widen the
+              // whole column so every string stays aligned.
+              const width = Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
               col.forEach((fret, s) => {
                 const label = fret === null ? '-' : String(fret)
-                lines[s] += label.padEnd(2, '-')
+                lines[s] += label.padEnd(width, ' ')
               })
             })
             lines.forEach((_, s) => (lines[s] += '|'))
@@ -470,7 +505,9 @@ export default function App() {
             canDeleteSection={sections.length > 1}
             selected={selected}
             playhead={playhead}
-            onSelectCell={(m, c, s) => setSelected({ m, c, s })}
+            onSelectCell={(m, c, s) =>
+              setSelected((prev) => (prev && prev.m === m && prev.c === c && prev.s === s ? null : { m, c, s }))
+            }
             onDeleteMeasure={deleteMeasure}
             onInsertMeasureAfter={insertMeasureAfter}
             onAddSectionAfter={addSectionAfter}
