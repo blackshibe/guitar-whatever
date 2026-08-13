@@ -11,6 +11,8 @@ export interface Track {
   name: string
   tuning: StringTuning[]
   measures: Measure[]
+  /** sectionId → bars this track cycles across that section; absent/0 = play through */
+  loops?: Record<number, number>
 }
 
 export interface Section {
@@ -18,6 +20,7 @@ export interface Section {
   name: string
   startMeasure: number
   comment?: string
+  /** legacy global repeat — migrated to written-out measures + per-track loops on load */
   repeat?: number
 }
 

@@ -16,7 +16,8 @@ interface Props {
   onAddSectionAfter: (m: number) => void
   onRenameSection: (id: number, name: string) => void
   onCommentChange: (id: number, comment: string) => void
-  onRepeatChange: (id: number, repeat: number) => void
+  activeLoops: Record<number, number>
+  onRepeatChange: (sectionId: number, times: number) => void
   onDeleteSection: (id: number) => void
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
   registerSectionRef: (id: number, el: HTMLDivElement | null) => void
@@ -38,6 +39,7 @@ export default function TabGrid({
   onAddSectionAfter,
   onRenameSection,
   onCommentChange,
+  activeLoops,
   onRepeatChange,
   onDeleteSection,
   onKeyDown,
@@ -46,10 +48,17 @@ export default function TabGrid({
   return (
     <div className="outline-none overflow-x-auto bg-neutral-900 border border-neutral-800 p-4" onKeyDown={onKeyDown} tabIndex={0}>
       {sectionRanges.map((sec) => {
-        const measureIndices = Array.from(
-          { length: sec.endMeasure - sec.startMeasure + 1 },
-          (_, off) => sec.startMeasure + off
-        )
+        const span = sec.endMeasure - sec.startMeasure + 1
+        const loop = activeLoops[sec.id] ?? 0
+        const times = loop > 0 ? Math.ceil(span / loop) : 1
+        // A looping track shows only its loop unit; the rest of the section span
+        // exists on the timeline (other tracks fill it) but is hidden here.
+        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => sec.startMeasure + off)
+        // Map the timeline playhead into the loop unit so it cycles on screen.
+        const playheadMeasure =
+          playhead && loop > 0 && playhead.m >= sec.startMeasure && playhead.m <= sec.endMeasure
+            ? sec.startMeasure + ((playhead.m - sec.startMeasure) % loop)
+            : playhead?.m ?? null
         return (
           <div
             className="border-t border-neutral-800 first:border-t-0 pt-3.5 first:pt-0 mb-2.5 scroll-mt-4"
@@ -62,18 +71,25 @@ export default function TabGrid({
                 value={sec.name}
                 onChange={(e) => onRenameSection(sec.id, e.target.value)}
               />
-              <label className="flex items-center gap-1 text-xs text-neutral-400" title="Number of times this section repeats during playback">
+              <label
+                className="flex items-center gap-1 text-xs text-neutral-400"
+                title="Times this track's bars repeat — raising it extends the section for the other tracks"
+              >
                 ×
                 <input
                   className="bg-neutral-950 border border-neutral-700 text-neutral-100 text-xs px-1.5 py-1 w-12"
                   type="number"
                   min={1}
                   max={99}
-                  value={sec.repeat ?? 1}
+                  value={times}
                   onChange={(e) => onRepeatChange(sec.id, Number(e.target.value))}
                 />
               </label>
-              <button className={headerBtn} onClick={() => onInsertMeasureAfter(sec.endMeasure)} title="Add measure to this section">
+              <button
+                className={headerBtn}
+                onClick={() => onInsertMeasureAfter(loop > 0 ? sec.startMeasure + loop - 1 : sec.endMeasure)}
+                title="Add measure to this section"
+              >
                 + measure
               </button>
               <button className={headerBtn} onClick={() => onAddSectionAfter(sec.endMeasure + 1)} title="Split a new section after this one">
@@ -89,7 +105,7 @@ export default function TabGrid({
             <input
               className="bg-transparent border-b border-neutral-800 focus:border-blue-600 outline-none text-xs text-neutral-400 placeholder-neutral-600 px-1 py-1 w-full max-w-[520px] mb-3"
               value={sec.comment ?? ''}
-              placeholder="Section notes (e.g. palm mute, capo 2, play softer)"
+              placeholder="Notes"
               onChange={(e) => onCommentChange(sec.id, e.target.value)}
             />
 
@@ -127,11 +143,12 @@ export default function TabGrid({
                         <span className="flex items-center shrink-0" key={m}>
                           {activeTrack.measures[m].map((col, c) => {
                             const isSelected = selected && selected.m === m && selected.c === c && selected.s === s
-                            const isPlayhead = playhead && playhead.m === m && playhead.c === c
+                            const isPlayhead = playheadMeasure === m && playhead?.c === c
                             const value = col[s]
                             return (
                               <button
                                 key={c}
+                                data-cell
                                 className={
                                   'w-[26px] h-[26px] shrink-0 border-0 border-b border-neutral-800 text-[13px] p-0 m-0 ' +
                                   (isSelected
