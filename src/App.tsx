@@ -544,16 +544,22 @@ export default function App() {
         )
         chunkMeasures(measureIndices).forEach((lineMeasures) => {
           const lines = track.tuning.map((str) => midiToNoteName(stringMidi(str)).padEnd(2, ' ') + '|')
+          // One column width for the whole line: any 2-digit fret widens every column.
+          const width = Math.max(
+            2,
+            ...lineMeasures.flatMap((m) =>
+              (track.measures[m] ?? []).map(
+                (col) => Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
+              )
+            )
+          )
           lineMeasures.forEach((m) => {
             const measure = track.measures[m]
             if (!measure) return
-            measure.forEach((col) => {
-              // Column width tracks its widest fret label: 2-digit frets widen the
-              // whole column so every string stays aligned.
-              const width = Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
+            measure.forEach((col, ci) => {
               col.forEach((fret, s) => {
                 const label = fret === null ? '-' : String(fret)
-                lines[s] += label.padEnd(width, ' ')
+                lines[s] += (ci === 0 ? ' ' : '') + label.padEnd(width, ' ')
               })
             })
             lines.forEach((_, s) => (lines[s] += '|'))
