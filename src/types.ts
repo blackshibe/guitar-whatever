@@ -20,6 +20,8 @@ export interface Section {
   name: string
   startMeasure: number
   comment?: string
+  /** id of the section this one mirrors — its bars read/write the source's */
+  linkTo?: number
   /** legacy global repeat — migrated to written-out measures + per-track loops on load */
   repeat?: number
 }

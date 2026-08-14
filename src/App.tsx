@@ -98,12 +98,50 @@ export default function App() {
   const activeTrack = tracks.find((t) => t.id === activeTrackId) ?? tracks[0]
   const sectionRanges = useMemo(() => sectionRangesFor(sections, measureCount), [sections, measureCount])
 
+  // A linked section resolves to its source; everything else resolves to itself.
+  const resolveRange = useCallback(
+    (sec: SectionRangeInternal): SectionRangeInternal =>
+      sec.linkTo != null ? sectionRanges.find((r) => r.id === sec.linkTo) ?? sec : sec,
+    [sectionRanges]
+  )
+
   // Effective loop length of a track over a section: 0 = play through.
-  const loopLenFor = useCallback((track: Track, sec: SectionRangeInternal): number => {
-    const raw = track.loops?.[sec.id] ?? 0
-    const span = sec.endMeasure - sec.startMeasure + 1
-    return raw > 0 && raw < span ? raw : 0
-  }, [])
+  const loopLenFor = useCallback(
+    (track: Track, sec: SectionRangeInternal): number => {
+      const src = resolveRange(sec)
+      const raw = track.loops?.[src.id] ?? 0
+      const span = src.endMeasure - src.startMeasure + 1
+      return raw > 0 && raw < span ? raw : 0
+    },
+    [resolveRange]
+  )
+
+  // Timeline measure → the measure that stores its content (linked sections read/write their source).
+  const srcMeasureIndex = useCallback(
+    (m: number): number => {
+      const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
+      if (!sec || sec.linkTo == null) return m
+      const src = resolveRange(sec)
+      return src === sec ? m : src.startMeasure + (m - sec.startMeasure)
+    },
+    [sectionRanges, resolveRange]
+  )
+
+  // Every timeline position that mirrors position m — m's own copy plus all linked
+  // copies, at the same offset. Structural edits (insert/delete a bar) apply to all
+  // of them so linked spans stay equal.
+  const linkedPositions = useCallback(
+    (m: number): number[] => {
+      const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
+      if (!sec) return [m]
+      const srcId = sec.linkTo ?? sec.id
+      const copies = sectionRanges.filter((r) => r.id === srcId || r.linkTo === srcId)
+      if (copies.length <= 1) return [m]
+      const off = m - sec.startMeasure
+      return copies.map((r) => r.startMeasure + off)
+    },
+    [sectionRanges]
+  )
 
   const activeLoops = useMemo(() => {
     const map: Record<number, number> = {}
@@ -124,6 +162,12 @@ export default function App() {
     [activeTrack, sectionRanges, loopLenFor]
   )
 
+  // What the grid renders: linked sections display their source's bars.
+  const viewTrack = useMemo(() => {
+    if (!activeTrack) return activeTrack
+    return { ...activeTrack, measures: activeTrack.measures.map((_, m) => activeTrack.measures[srcMeasureIndex(m)]) }
+  }, [activeTrack, srcMeasureIndex])
+
   const updateTrack = useCallback((trackId: number, updater: (t: Track) => Track) => {
     setTracks((prev) => prev.map((t) => (t.id === trackId ? updater(t) : t)))
   }, [])
@@ -140,44 +184,56 @@ export default function App() {
   )
 
   // ---- measures ----
-  const addMeasureAtEnd = () => {
-    setTracks((prev) => prev.map((t) => ({ ...t, measures: [...t.measures, ...makeMeasures(t.tuning.length, 1)] })))
-    setMeasureCount((n) => n + 1)
-  }
+  const addMeasureAtEnd = () => insertMeasureAfter(measureCount - 1)
 
   const insertMeasureAfter = (m: number) => {
     const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
+    const src = sec ? resolveRange(sec) : undefined
+    const positions = linkedPositions(m)
+    const desc = [...positions].sort((a, b) => b - a)
     setTracks((prev) =>
       prev.map((t) => {
         const measures = t.measures.slice()
-        measures.splice(m + 1, 0, ...makeMeasures(t.tuning.length, 1))
+        desc.forEach((p) => measures.splice(p + 1, 0, ...makeMeasures(t.tuning.length, 1)))
         // A bar inserted inside a track's loop unit grows that unit.
         let loops = t.loops
-        if (sec) {
+        if (sec && src) {
           const loop = loopLenFor(t, sec)
-          if (loop > 0 && m < sec.startMeasure + loop) loops = { ...loops, [sec.id]: loop + 1 }
+          if (loop > 0 && m - sec.startMeasure < loop) loops = { ...loops, [src.id]: loop + 1 }
         }
         return { ...t, measures, loops }
       })
     )
-    setMeasureCount((n) => n + 1)
-    setSections((prev) => dedupeSections(prev.map((s) => (s.startMeasure > m ? { ...s, startMeasure: s.startMeasure + 1 } : s))))
+    setMeasureCount((n) => n + positions.length)
+    setSections((prev) =>
+      dedupeSections(
+        prev.map((s) => {
+          const shift = positions.filter((p) => s.startMeasure > p).length
+          return shift ? { ...s, startMeasure: s.startMeasure + shift } : s
+        })
+      )
+    )
   }
 
   const deleteMeasure = (m: number) => {
-    if (measureCount <= 1) return
-    const newCount = measureCount - 1
     const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
+    const src = sec ? resolveRange(sec) : undefined
+    const positions = linkedPositions(m)
+    if (measureCount - positions.length < 1) return
+    // Deleting the only bar of a linked group would leave dangling markers — remove the copy instead.
+    if (sec && positions.length > 1 && sec.endMeasure === sec.startMeasure) return
+    const drop = new Set(positions)
+    const newCount = measureCount - positions.length
     setTracks((prev) =>
       prev.map((t) => {
-        const measures = t.measures.filter((_, i) => i !== m)
+        const measures = t.measures.filter((_, i) => !drop.has(i))
         let loops = t.loops
-        if (sec) {
+        if (sec && src) {
           const loop = loopLenFor(t, sec)
-          if (loop > 0 && m < sec.startMeasure + loop) {
+          if (loop > 0 && m - sec.startMeasure < loop) {
             loops = { ...loops }
-            if (loop <= 1) delete loops[sec.id]
-            else loops[sec.id] = loop - 1
+            if (loop <= 1) delete loops[src.id]
+            else loops[src.id] = loop - 1
           }
         }
         return { ...t, measures, loops }
@@ -186,11 +242,15 @@ export default function App() {
     setMeasureCount(newCount)
     setSections((prev) => {
       const shifted = prev
-        .map((s) => (s.startMeasure > m ? { ...s, startMeasure: s.startMeasure - 1 } : s))
+        .map((s) => {
+          const shift = positions.filter((p) => p < s.startMeasure).length
+          return shift ? { ...s, startMeasure: s.startMeasure - shift } : s
+        })
         .map((s) => (s.startMeasure >= newCount ? { ...s, startMeasure: newCount - 1 } : s))
       const deduped = dedupeSections(shifted).sort((a, b) => a.startMeasure - b.startMeasure)
       if (deduped[0].startMeasure !== 0) deduped[0] = { ...deduped[0], startMeasure: 0 }
-      return deduped
+      const ids = new Set(deduped.map((s) => s.id))
+      return deduped.map((s) => (s.linkTo != null && !ids.has(s.linkTo) ? { ...s, linkTo: undefined } : s))
     })
     setSelected(null)
   }
@@ -198,7 +258,24 @@ export default function App() {
   // ---- sections ----
   const addSectionAt = (m: number) => {
     if (sections.some((s) => s.startMeasure === m)) return
+    // Splitting a linked section — or a source that has linked copies — would break the mirroring.
+    const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
+    if (sec && (sec.linkTo != null || sectionRanges.some((r) => r.linkTo === sec.id))) return
     setSections((prev) => [...prev, { id: nextId(), name: 'New Section', startMeasure: m, comment: '' }])
+  }
+
+  // Append a linked copy of a section at the end of the song. It occupies real
+  // timeline bars but owns no content: reads and writes resolve to the source,
+  // so edits anywhere apply everywhere. Linking a linked copy links its source.
+  const addLinkedSection = (id: number) => {
+    const target = sectionRanges.find((r) => r.id === id)
+    if (!target) return
+    const src = resolveRange(target)
+    const span = src.endMeasure - src.startMeasure + 1
+    const start = measureCount
+    setTracks((prev) => prev.map((t) => ({ ...t, measures: [...t.measures, ...makeMeasures(t.tuning.length, span)] })))
+    setMeasureCount((c) => c + span)
+    setSections((prev) => [...prev, { id: nextId(), name: src.name, startMeasure: start, comment: '', linkTo: src.id }])
   }
 
   // Start a new section at measure m. If m is past the end, or another section
@@ -239,15 +316,18 @@ export default function App() {
   // section tail, but only when no track would lose written content.
   const setTrackRepeat = (sectionId: number, times: number) => {
     if (!activeTrack) return
-    const sec = sectionRanges.find((r) => r.id === sectionId)
-    if (!sec) return
+    const target = sectionRanges.find((r) => r.id === sectionId)
+    if (!target) return
+    const sec = resolveRange(target) // a linked copy's ×N acts on its source
     const span = sec.endMeasure - sec.startMeasure + 1
     const n = Math.max(1, Math.min(99, Math.round(times) || 1))
     const unit = loopLenFor(activeTrack, sec) || span
+    // Every linked copy resizes in lockstep with the source.
+    const copies = sectionRanges.filter((r) => r.id === sec.id || r.linkTo === sec.id)
     updateTrack(activeTrack.id, (t) => {
       const loops = { ...(t.loops ?? {}) }
-      if (n > 1) loops[sectionId] = unit
-      else delete loops[sectionId]
+      if (n > 1) loops[sec.id] = unit
+      else delete loops[sec.id]
       return { ...t, loops }
     })
     setSelected(null)
@@ -255,35 +335,97 @@ export default function App() {
     const desired = unit * n
     if (desired > span) {
       const extra = desired - span
-      const at = sec.endMeasure + 1
+      const ats = copies.map((r) => r.endMeasure + 1).sort((a, b) => b - a)
       setTracks((prev) =>
         prev.map((t) => {
           const measures = t.measures.slice()
-          measures.splice(at, 0, ...makeMeasures(t.tuning.length, extra))
+          ats.forEach((at) => measures.splice(at, 0, ...makeMeasures(t.tuning.length, extra)))
           return { ...t, measures }
         })
       )
-      setMeasureCount((c) => c + extra)
-      setSections((prev) => prev.map((s) => (s.startMeasure >= at ? { ...s, startMeasure: s.startMeasure + extra } : s)))
+      setMeasureCount((c) => c + extra * copies.length)
+      setSections((prev) =>
+        prev.map((s) => {
+          const shift = ats.filter((at) => s.startMeasure >= at).length * extra
+          return shift ? { ...s, startMeasure: s.startMeasure + shift } : s
+        })
+      )
     } else if (desired < span) {
-      const from = sec.startMeasure + desired
       const cnt = span - desired
+      const froms = copies.map((r) => r.startMeasure + desired)
       const safe = tracks.every((t) => {
         const tLoop = t.id === activeTrack.id ? unit : loopLenFor(t, sec)
         if (tLoop > 0 && tLoop <= desired) return true // cycled bars for this track — nothing real is shown there
-        return t.measures.slice(from, from + cnt).every((measure) => measure.every((col) => col.every((v) => v === null || v === '')))
+        return froms.every((from) =>
+          t.measures.slice(from, from + cnt).every((measure) => measure.every((col) => col.every((v) => v === null || v === '')))
+        )
       })
       if (!safe) return
-      setTracks((prev) => prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => i < from || i >= from + cnt) })))
-      setMeasureCount((c) => c - cnt)
-      setSections((prev) => prev.map((s) => (s.startMeasure > from ? { ...s, startMeasure: s.startMeasure - cnt } : s)))
+      const drop = new Set(froms.flatMap((from) => Array.from({ length: cnt }, (_, i) => from + i)))
+      setTracks((prev) => prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => !drop.has(i)) })))
+      setMeasureCount((c) => c - cnt * copies.length)
+      setSections((prev) =>
+        prev.map((s) => {
+          const shift = froms.filter((from) => s.startMeasure > from).length * cnt
+          return shift ? { ...s, startMeasure: s.startMeasure - shift } : s
+        })
+      )
     }
   }
 
   const deleteSection = (id: number) => {
+    const sec = sectionRanges.find((r) => r.id === id)
+    if (!sec) return
+
+    // A linked copy owns no content — removing it removes its bars too.
+    if (sec.linkTo != null) {
+      const span = sec.endMeasure - sec.startMeasure + 1
+      if (measureCount - span < 1) return
+      setTracks((prev) =>
+        prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => i < sec.startMeasure || i > sec.endMeasure) }))
+      )
+      setMeasureCount((c) => c - span)
+      setSections((prev) => {
+        const next = prev
+          .filter((s) => s.id !== id)
+          .map((s) => (s.startMeasure > sec.endMeasure ? { ...s, startMeasure: s.startMeasure - span } : s))
+          .sort((a, b) => a.startMeasure - b.startMeasure)
+        if (next[0].startMeasure !== 0) next[0] = { ...next[0], startMeasure: 0 }
+        return next
+      })
+      setSelected(null)
+      return
+    }
+
     if (sections.length <= 1) return
+    // Removing a source marker merges its bars into the previous section, so its
+    // linked copies materialize first: content and loops are written into their
+    // own bars and they become ordinary sections.
+    const mirrors = sectionRanges.filter((r) => r.linkTo === id)
+    if (mirrors.length) {
+      const span = sec.endMeasure - sec.startMeasure + 1
+      setTracks((prev) =>
+        prev.map((t) => {
+          const measures = t.measures.slice()
+          mirrors.forEach((mr) => {
+            for (let off = 0; off < span; off++) {
+              measures[mr.startMeasure + off] = measures[sec.startMeasure + off].map((col) => col.slice())
+            }
+          })
+          let loops = t.loops
+          if (loops?.[id]) {
+            loops = { ...loops }
+            mirrors.forEach((mr) => (loops![mr.id] = t.loops![id]))
+          }
+          return { ...t, measures, loops }
+        })
+      )
+    }
     setSections((prev) => {
-      const next = prev.filter((s) => s.id !== id).sort((a, b) => a.startMeasure - b.startMeasure)
+      const next = prev
+        .filter((s) => s.id !== id)
+        .map((s) => (s.linkTo === id ? { ...s, linkTo: undefined } : s))
+        .sort((a, b) => a.startMeasure - b.startMeasure)
       if (next[0].startMeasure !== 0) next[0] = { ...next[0], startMeasure: 0 }
       return next
     })
@@ -367,6 +509,29 @@ export default function App() {
     setTimeout(() => setSaveStatus(''), 2000)
   }
 
+  const exportLibrary = () => {
+    const blob = new Blob([storage.exportLibrary()], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'tab-editor-songs.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importLibrary = async (file: File) => {
+    let status: string
+    try {
+      const count = storage.importLibrary(await file.text())
+      setLibrarySongs(storage.listSongs())
+      status = `Imported ${count}`
+    } catch {
+      status = 'Import failed'
+    }
+    setSaveStatus(status)
+    setTimeout(() => setSaveStatus(''), 2000)
+  }
+
   const applySong = (song: Song) => {
     stopPlayback()
     const maxId = Math.max(0, ...song.sections.map((s) => s.id), ...song.tracks.map((t) => t.id))
@@ -416,19 +581,21 @@ export default function App() {
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
       if (!selected || !activeTrack) return
       const { m, c, s } = selected
-      const measure = activeTrack.measures[m]
+      // Cells in a linked section read and write their source's measure.
+      const mm = srcMeasureIndex(m)
+      const measure = activeTrack.measures[mm]
 
       if (e.key >= '0' && e.key <= '9') {
         e.preventDefault()
         const current = measure[c][s]
         let next = current === null ? e.key : String(Number(current + e.key))
         if (next.length > 2 || Number(next) > 24) next = e.key
-        setCell(activeTrack.id, m, c, s, next)
+        setCell(activeTrack.id, mm, c, s, next)
         return
       }
       if (e.key === 'Backspace' || e.key === 'Delete') {
         e.preventDefault()
-        setCell(activeTrack.id, m, c, s, null)
+        setCell(activeTrack.id, mm, c, s, null)
         return
       }
       const moveTo = (nm: number, nc: number, ns: number) => {
@@ -469,7 +636,7 @@ export default function App() {
         if (nm !== null) moveTo(nm, 0, s)
         else {
           const lastSec = sectionRanges[sectionRanges.length - 1]
-          if (lastSec && loopLenFor(activeTrack, lastSec) === 0) {
+          if (lastSec && lastSec.linkTo == null && loopLenFor(activeTrack, lastSec) === 0) {
             addMeasureAtEnd()
             moveTo(measureCount, 0, s)
           }
@@ -478,7 +645,7 @@ export default function App() {
       }
       if (e.key === 'Escape') setSelected(null)
     },
-    [selected, activeTrack, measureCount, setCell, sectionRanges, isGhostMeasure, loopLenFor]
+    [selected, activeTrack, measureCount, setCell, sectionRanges, isGhostMeasure, loopLenFor, srcMeasureIndex]
   )
 
   // ---- playback: mixes every track together ----
@@ -507,10 +674,12 @@ export default function App() {
       setPlayhead({ m, c })
       const t = now()
       tracks.forEach((track) => {
-        // A looping track cycles its loop unit while the timeline advances.
+        // A linked section plays its source; a looping track cycles its loop unit.
         const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-        const loop = sec ? loopLenFor(track, sec) : 0
-        const tm = loop > 0 && sec ? sec.startMeasure + ((m - sec.startMeasure) % loop) : m
+        const src = sec ? resolveRange(sec) : undefined
+        const loop = src ? loopLenFor(track, src) : 0
+        const off = sec ? m - sec.startMeasure : 0
+        const tm = sec && src ? src.startMeasure + (loop > 0 ? off % loop : off) : m
         const col = track.measures[tm]?.[c]
         if (!col) return
         col.forEach((fret, s) => {
@@ -533,14 +702,20 @@ export default function App() {
     tracks.forEach((track) => {
       parts.push(`-- ${track.name} --`)
       sectionRanges.forEach((sec) => {
-        const loop = loopLenFor(track, sec)
-        const span = sec.endMeasure - sec.startMeasure + 1
+        const src = resolveRange(sec)
+        const loop = loopLenFor(track, src)
+        const span = src.endMeasure - src.startMeasure + 1
         const loopSuffix = loop > 0 ? ` x${Math.ceil(span / loop)}` : ''
-        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => sec.startMeasure + off)
+        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => src.startMeasure + off)
         const isEmpty = measureIndices.every((m) =>
           (track.measures[m] ?? []).every((col) => col.every((fret) => fret === null || fret === ''))
         )
         if (isEmpty) return
+        // A linked section prints a reference to its source instead of repeating the bars.
+        if (src !== sec) {
+          parts.push(`== ${sec.name} = ${src.name}${loopSuffix} ==`, '')
+          return
+        }
         parts.push(`== ${sec.name}${loopSuffix} ==`)
         if (sec.comment) parts.push(`# ${sec.comment}`)
         // One column width for the whole section: any 2-digit fret widens every column.
@@ -571,7 +746,7 @@ export default function App() {
       })
     })
     return parts.join('\n')
-  }, [title, sectionRanges, tracks, loopLenFor])
+  }, [title, sectionRanges, tracks, loopLenFor, resolveRange])
 
   const copyExport = async () => {
     try {
@@ -594,6 +769,8 @@ export default function App() {
         onDelete={deleteSongFromLibrary}
         onNew={newSong}
         onSave={handleSave}
+        onExport={exportLibrary}
+        onImport={importLibrary}
         saveStatus={saveStatus}
       />
 
@@ -630,7 +807,7 @@ export default function App() {
 
         {activeTrack && (
           <TabGrid
-            activeTrack={activeTrack}
+            activeTrack={viewTrack ?? activeTrack}
             sectionRanges={sectionRanges}
             measureCount={measureCount}
             canDeleteSection={sections.length > 1}
@@ -642,6 +819,7 @@ export default function App() {
             onDeleteMeasure={deleteMeasure}
             onInsertMeasureAfter={insertMeasureAfter}
             onAddSectionAfter={addSectionAfter}
+            onLinkSection={addLinkedSection}
             onRenameSection={renameSection}
             onCommentChange={updateSectionComment}
             activeLoops={activeLoops}

@@ -25,7 +25,7 @@ export function makeMeasures(stringCount: number, count: number): Measure[] {
 }
 
 export function defaultTuning(): StringTuning[] {
-  return presetToTuning(PRESET_TUNINGS['Guitar Standard (E A D G B e)'])
+  return presetToTuning(PRESET_TUNINGS['Guitar Standard'])
 }
 
 // tuning: array of { noteIndex, octave }, row 0 = top string as drawn.

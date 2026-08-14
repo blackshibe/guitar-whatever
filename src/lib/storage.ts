@@ -74,6 +74,37 @@ export function loadSong(id: string): Song | null {
   return song ? migrateSong(song) : null
 }
 
+export function exportLibrary(): string {
+  return JSON.stringify(readLibrary(), null, 2)
+}
+
+function isSong(v: unknown): v is Song {
+  const s = v as Song
+  return (
+    !!s &&
+    typeof s === 'object' &&
+    typeof s.id === 'string' &&
+    typeof s.title === 'string' &&
+    typeof s.measureCount === 'number' &&
+    Array.isArray(s.tracks) &&
+    Array.isArray(s.sections)
+  )
+}
+
+// Accepts a full library export, an array of songs, or a single song.
+// Merges by song id (imported wins) and returns how many songs were imported.
+export function importLibrary(json: string): number {
+  const parsed: unknown = JSON.parse(json)
+  const songs = isSong(parsed)
+    ? [parsed]
+    : (Array.isArray(parsed) ? parsed : parsed && typeof parsed === 'object' ? Object.values(parsed) : []).filter(isSong)
+  if (songs.length === 0) throw new Error('no songs in file')
+  const lib = readLibrary()
+  songs.forEach((s) => (lib[s.id] = s))
+  writeLibrary(lib)
+  return songs.length
+}
+
 export function getLastOpenedId(): string | null {
   return localStorage.getItem(LAST_OPENED_KEY)
 }

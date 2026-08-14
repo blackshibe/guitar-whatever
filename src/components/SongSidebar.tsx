@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import type { Song } from '../types'
 
 interface Props {
@@ -7,6 +8,8 @@ interface Props {
   onDelete: (id: string) => void
   onNew: () => void
   onSave: () => void
+  onExport: () => void
+  onImport: (file: File) => void
   saveStatus: string
 }
 
@@ -14,8 +17,9 @@ const btn = 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs px-2.5
 const danger = 'bg-neutral-800 hover:bg-rose-900 hover:text-rose-300 text-neutral-200 text-xs px-2.5 py-1'
 const saveBtn = 'bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1'
 
-export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, onNew, onSave, saveStatus }: Props) {
+export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, onNew, onSave, onExport, onImport, saveStatus }: Props) {
   const isSaved = songs.some((s) => s.id === currentSongId)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleDelete = (song: Song) => {
     if (window.confirm(`Delete "${song.title || 'Untitled Song'}"? This can't be undone.`)) {
@@ -37,6 +41,26 @@ export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, on
           {isSaved ? 'Overwrite' : 'Save'}
         </button>
         {saveStatus && <span className="text-xs text-emerald-400">{saveStatus}</span>}
+      </div>
+
+      <div className="flex items-center gap-2 mb-4">
+        <button className={`${btn} flex-1`} onClick={onExport} title="Download all saved songs as JSON">
+          Export
+        </button>
+        <button className={`${btn} flex-1`} onClick={() => fileInputRef.current?.click()} title="Merge songs from a JSON export">
+          Import
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) onImport(file)
+            e.target.value = ''
+          }}
+        />
       </div>
 
       {songs.length === 0 ? (

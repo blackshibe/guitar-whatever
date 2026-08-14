@@ -28,14 +28,19 @@ export function midiToNoteName(midi: number): string {
 
 // Preset tunings, top string (row 0) to bottom string, as MIDI notes.
 export const PRESET_TUNINGS: Record<string, number[]> = {
-  'Guitar Standard (E A D G B e)': [64, 59, 55, 50, 45, 40],
+  'Guitar Standard': [64, 59, 55, 50, 45, 40],
   'Guitar Drop D': [64, 59, 55, 50, 45, 38],
   'Guitar Half Step Down': [63, 58, 54, 49, 44, 39],
   'Guitar Open G': [62, 59, 55, 50, 43, 38],
   'Guitar 7-String': [64, 59, 55, 50, 45, 40, 35],
-  'Bass Standard (G D A E)': [43, 38, 33, 28],
-  'Bass 5-String (G D A E B)': [43, 38, 33, 28, 23],
-  'Ukulele Standard (G C E A)': [69, 60, 64, 57],
+  'Bass Standard': [43, 38, 33, 28],
+  'Bass 5-String': [43, 38, 33, 28, 23],
+  'Ukulele Standard': [69, 60, 64, 57],
+}
+
+// "Guitar Standard (E A D G B E)" — notes derived from the preset, low string first.
+export function presetLabel(name: string): string {
+  return `${name} (${[...PRESET_TUNINGS[name]].reverse().map(midiToNoteName).join(' ')})`
 }
 
 export function presetToTuning(midiList: number[]): StringTuning[] {

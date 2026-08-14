@@ -14,6 +14,7 @@ interface Props {
   onDeleteMeasure: (m: number) => void
   onInsertMeasureAfter: (m: number) => void
   onAddSectionAfter: (m: number) => void
+  onLinkSection: (id: number) => void
   onRenameSection: (id: number, name: string) => void
   onCommentChange: (id: number, comment: string) => void
   activeLoops: Record<number, number>
@@ -37,6 +38,7 @@ export default function TabGrid({
   onDeleteMeasure,
   onInsertMeasureAfter,
   onAddSectionAfter,
+  onLinkSection,
   onRenameSection,
   onCommentChange,
   activeLoops,
@@ -48,6 +50,7 @@ export default function TabGrid({
   return (
     <div className="outline-none overflow-x-auto bg-neutral-900 border border-neutral-800 p-4" onKeyDown={onKeyDown} tabIndex={0}>
       {sectionRanges.map((sec) => {
+        const src = sec.linkTo != null ? sectionRanges.find((r) => r.id === sec.linkTo) : undefined
         const span = sec.endMeasure - sec.startMeasure + 1
         const loop = activeLoops[sec.id] ?? 0
         const times = loop > 0 ? Math.ceil(span / loop) : 1
@@ -71,20 +74,29 @@ export default function TabGrid({
                 value={sec.name}
                 onChange={(e) => onRenameSection(sec.id, e.target.value)}
               />
-              <label
-                className="flex items-center gap-1 text-xs text-neutral-400"
-                title="Times this track's bars repeat — raising it extends the section for the other tracks"
-              >
-                ×
-                <input
-                  className="bg-neutral-950 border border-neutral-700 text-neutral-100 text-xs px-1.5 py-1 w-12"
-                  type="number"
-                  min={1}
-                  max={99}
-                  value={times}
-                  onChange={(e) => onRepeatChange(sec.id, Number(e.target.value))}
-                />
-              </label>
+              {src && (
+                <span className="text-xs text-neutral-500" title="Linked copy — edits here and at the source mirror each other">
+                  = {src.name}
+                </span>
+              )}
+              {src ? (
+                times > 1 && <span className="text-xs text-neutral-400">×{times}</span>
+              ) : (
+                <label
+                  className="flex items-center gap-1 text-xs text-neutral-400"
+                  title="Times this track's bars repeat — raising it extends the section for the other tracks"
+                >
+                  ×
+                  <input
+                    className="bg-neutral-950 border border-neutral-700 text-neutral-100 text-xs px-1.5 py-1 w-12"
+                    type="number"
+                    min={1}
+                    max={99}
+                    value={times}
+                    onChange={(e) => onRepeatChange(sec.id, Number(e.target.value))}
+                  />
+                </label>
+              )}
               <button
                 className={headerBtn}
                 onClick={() => onInsertMeasureAfter(loop > 0 ? sec.startMeasure + loop - 1 : sec.endMeasure)}
@@ -95,9 +107,16 @@ export default function TabGrid({
               <button className={headerBtn} onClick={() => onAddSectionAfter(sec.endMeasure + 1)} title="Split a new section after this one">
                 + section after
               </button>
-              {canDeleteSection && (
-                <button className={dangerHeaderBtn} onClick={() => onDeleteSection(sec.id)} title="Remove section marker">
-                  remove marker
+              <button className={headerBtn} onClick={() => onLinkSection(sec.id)} title="Append a linked copy at the end — edits mirror each other">
+                + link
+              </button>
+              {(canDeleteSection || src) && (
+                <button
+                  className={dangerHeaderBtn}
+                  onClick={() => onDeleteSection(sec.id)}
+                  title={src ? 'Remove this linked copy and its bars' : 'Remove section marker'}
+                >
+                  {src ? 'remove link' : 'remove marker'}
                 </button>
               )}
             </div>

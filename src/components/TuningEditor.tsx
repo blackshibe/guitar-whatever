@@ -1,4 +1,4 @@
-import { PRESET_TUNINGS, NOTE_NAMES, presetToTuning } from '../lib/tunings'
+import { PRESET_TUNINGS, NOTE_NAMES, presetLabel, presetToTuning } from '../lib/tunings'
 import type { StringTuning } from '../types'
 
 interface Props {
@@ -63,7 +63,7 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
             <option value="">— custom —</option>
             {Object.keys(PRESET_TUNINGS).map((name) => (
               <option key={name} value={name}>
-                {name}
+                {presetLabel(name)}
               </option>
             ))}
           </select>
