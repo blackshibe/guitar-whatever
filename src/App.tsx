@@ -1,46 +1,30 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import {
-  COLS_PER_MEASURE,
-  advanceIdCounter,
-  chunkMeasures,
-  defaultTuning,
-  makeMeasures,
-  makeTrack,
-  nextId,
-  stringMidi,
-} from './lib/instruments'
-import { midiToFreq, midiToNoteName } from './lib/tunings'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from 'react'
+import { COLS_PER_MEASURE, advanceIdCounter, defaultTuning, makeTrack, nextId, stringMidi } from './lib/instruments'
+import { midiToFreq } from './lib/tunings'
 import { playNote, resumeAudio, now } from './lib/audio'
 import * as storage from './lib/storage'
-import type { Playhead, Section, Selection, Song, Track } from './types'
-import Toolbar from './components/Toolbar'
+import { sectionRangesFor } from './lib/songOps'
+import { buildExportText } from './lib/exportText'
+import {
+  copyRange,
+  globalCol,
+  normalizeRect,
+  parsePayload,
+  sectionToClipboard,
+  type ClipboardPayload,
+} from './lib/clipboard'
+import { historyReducer, initHistory } from './lib/songReducer'
+import { videoSecondsForCol } from './lib/youtube'
+import type { CellPos, Playhead, RangeSelection, Song } from './types'
 import TrackTabs from './components/TrackTabs'
 import SectionNav from './components/SectionNav'
 import TabGrid from './components/TabGrid'
 import TuningEditor from './components/TuningEditor'
 import SongSidebar from './components/SongSidebar'
 import ExportPanel from './components/ExportPanel'
-
-interface SectionRangeInternal extends Section {
-  endMeasure: number
-}
-
-function sectionRangesFor(sections: Section[], measureCount: number): SectionRangeInternal[] {
-  const sorted = [...sections].sort((a, b) => a.startMeasure - b.startMeasure)
-  return sorted.map((sec, i) => ({
-    ...sec,
-    endMeasure: (sorted[i + 1]?.startMeasure ?? measureCount) - 1,
-  }))
-}
-
-function dedupeSections(sections: Section[]): Section[] {
-  const seen = new Set<number>()
-  return sections.filter((s) => {
-    if (seen.has(s.startMeasure)) return false
-    seen.add(s.startMeasure)
-    return true
-  })
-}
+import YoutubeSyncPanel, { type YoutubeSyncHandle } from './components/YoutubeSync'
+import TransportBar from './components/TransportBar'
+import Toast from './components/Toast'
 
 function blankSong(): Song {
   const track = makeTrack('Guitar', defaultTuning(), 4)
@@ -62,24 +46,33 @@ export default function App() {
     return loaded ?? blankSong()
   })
 
-  const [songId, setSongId] = useState(initial.id)
-  const [title, setTitle] = useState(initial.title)
-  const [measureCount, setMeasureCount] = useState(initial.measureCount)
-  const [sections, setSections] = useState<Section[]>(initial.sections)
-  const [tracks, setTracks] = useState<Track[]>(initial.tracks)
-  const [activeTrackId, setActiveTrackId] = useState<number>(initial.tracks[0]?.id)
-  const [bpm, setBpm] = useState(initial.bpm)
+  const [history, dispatch] = useReducer(historyReducer, initial, initHistory)
+  const song = history.present
+  const { title, bpm, measureCount, sections, tracks, youtube } = song
 
-  const [selected, setSelected] = useState<Selection | null>(null)
+  const [activeTrackId, setActiveTrackId] = useState<number>(initial.tracks[0]?.id)
+  const [selected, setSelected] = useState<RangeSelection | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playhead, setPlayhead] = useState<Playhead | null>(null)
-  const [copyStatus, setCopyStatus] = useState('')
-  const [saveStatus, setSaveStatus] = useState('')
+  const [clip, setClip] = useState<ClipboardPayload | null>(null)
   const [tuningEditorTrackId, setTuningEditorTrackId] = useState<number | null>(null)
   const [librarySongs, setLibrarySongs] = useState<Song[]>(() => storage.listSongs())
+  const [toastMsg, setToastMsg] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
 
   const playTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const visualTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([])
   const sectionRefs = useRef<Record<number, HTMLDivElement | null>>({})
+  const gridRef = useRef<HTMLDivElement | null>(null)
+  const ytRef = useRef<YoutubeSyncHandle | null>(null)
+  const draggingRef = useRef(false)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg)
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = setTimeout(() => setToastMsg(null), 2200)
+  }, [])
 
   useEffect(() => {
     const maxId = Math.max(0, ...initial.sections.map((s) => s.id), ...initial.tracks.map((t) => t.id))
@@ -87,356 +80,167 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Selection survives clicks on the toolbar (play-from-cell, + Section) but
+  // clears anywhere else outside the grid.
   useEffect(() => {
     const onMouseDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('[data-cell]')) setSelected(null)
+      if (!(e.target as HTMLElement).closest('[data-grid],[data-keep-selection]')) setSelected(null)
+    }
+    const onMouseUp = () => {
+      draggingRef.current = false
     }
     document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
+    document.addEventListener('mouseup', onMouseUp)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
+
+  // Undo/redo work everywhere except while typing in a text field.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+      if (!(e.ctrlKey || e.metaKey)) return
+      const key = e.key.toLowerCase()
+      if (key === 'z') {
+        e.preventDefault()
+        dispatch({ type: e.shiftKey ? 'redo' : 'undo' })
+      } else if (key === 'y') {
+        e.preventDefault()
+        dispatch({ type: 'redo' })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   const activeTrack = tracks.find((t) => t.id === activeTrackId) ?? tracks[0]
   const sectionRanges = useMemo(() => sectionRangesFor(sections, measureCount), [sections, measureCount])
 
-  // A linked section resolves to its source; everything else resolves to itself.
-  const resolveRange = useCallback(
-    (sec: SectionRangeInternal): SectionRangeInternal =>
-      sec.linkTo != null ? sectionRanges.find((r) => r.id === sec.linkTo) ?? sec : sec,
-    [sectionRanges]
-  )
-
-  // Effective loop length of a track over a section: 0 = play through.
-  const loopLenFor = useCallback(
-    (track: Track, sec: SectionRangeInternal): number => {
-      const src = resolveRange(sec)
-      const raw = track.loops?.[src.id] ?? 0
-      const span = src.endMeasure - src.startMeasure + 1
-      return raw > 0 && raw < span ? raw : 0
-    },
-    [resolveRange]
-  )
-
-  // Timeline measure → the measure that stores its content (linked sections read/write their source).
-  const srcMeasureIndex = useCallback(
-    (m: number): number => {
-      const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-      if (!sec || sec.linkTo == null) return m
-      const src = resolveRange(sec)
-      return src === sec ? m : src.startMeasure + (m - sec.startMeasure)
-    },
-    [sectionRanges, resolveRange]
-  )
-
-  // Every timeline position that mirrors position m — m's own copy plus all linked
-  // copies, at the same offset. Structural edits (insert/delete a bar) apply to all
-  // of them so linked spans stay equal.
-  const linkedPositions = useCallback(
-    (m: number): number[] => {
-      const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-      if (!sec) return [m]
-      const srcId = sec.linkTo ?? sec.id
-      const copies = sectionRanges.filter((r) => r.id === srcId || r.linkTo === srcId)
-      if (copies.length <= 1) return [m]
-      const off = m - sec.startMeasure
-      return copies.map((r) => r.startMeasure + off)
-    },
-    [sectionRanges]
-  )
-
-  const activeLoops = useMemo(() => {
-    const map: Record<number, number> = {}
-    if (activeTrack) sectionRanges.forEach((sec) => (map[sec.id] = loopLenFor(activeTrack, sec)))
-    return map
-  }, [activeTrack, sectionRanges, loopLenFor])
-
-  // A measure is a ghost for the active track when it falls past the track's
-  // loop unit in a looped section: it renders/plays cycled content and can't be edited.
-  const isGhostMeasure = useCallback(
-    (m: number): boolean => {
-      if (!activeTrack) return false
-      const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-      if (!sec) return false
-      const loop = loopLenFor(activeTrack, sec)
-      return loop > 0 && m >= sec.startMeasure + loop
-    },
-    [activeTrack, sectionRanges, loopLenFor]
-  )
-
-  // What the grid renders: linked sections display their source's bars.
-  const viewTrack = useMemo(() => {
-    if (!activeTrack) return activeTrack
-    return { ...activeTrack, measures: activeTrack.measures.map((_, m) => activeTrack.measures[srcMeasureIndex(m)]) }
-  }, [activeTrack, srcMeasureIndex])
-
-  const updateTrack = useCallback((trackId: number, updater: (t: Track) => Track) => {
-    setTracks((prev) => prev.map((t) => (t.id === trackId ? updater(t) : t)))
-  }, [])
-
-  const setCell = useCallback(
-    (trackId: number, m: number, c: number, s: number, value: string | null) => {
-      updateTrack(trackId, (t) => {
-        const measures = t.measures.map((measure) => measure.map((col) => col.slice()))
-        measures[m][c][s] = value
-        return { ...t, measures }
-      })
-    },
-    [updateTrack]
-  )
-
-  // ---- measures ----
-  const addMeasureAtEnd = () => insertMeasureAfter(measureCount - 1)
-
-  const insertMeasureAfter = (m: number) => {
-    const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-    const src = sec ? resolveRange(sec) : undefined
-    const positions = linkedPositions(m)
-    const desc = [...positions].sort((a, b) => b - a)
-    setTracks((prev) =>
-      prev.map((t) => {
-        const measures = t.measures.slice()
-        desc.forEach((p) => measures.splice(p + 1, 0, ...makeMeasures(t.tuning.length, 1)))
-        // A bar inserted inside a track's loop unit grows that unit.
-        let loops = t.loops
-        if (sec && src) {
-          const loop = loopLenFor(t, sec)
-          if (loop > 0 && m - sec.startMeasure < loop) loops = { ...loops, [src.id]: loop + 1 }
-        }
-        return { ...t, measures, loops }
-      })
-    )
-    setMeasureCount((n) => n + positions.length)
-    setSections((prev) =>
-      dedupeSections(
-        prev.map((s) => {
-          const shift = positions.filter((p) => s.startMeasure > p).length
-          return shift ? { ...s, startMeasure: s.startMeasure + shift } : s
-        })
-      )
-    )
-  }
-
-  const deleteMeasure = (m: number) => {
-    const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-    const src = sec ? resolveRange(sec) : undefined
-    const positions = linkedPositions(m)
-    if (measureCount - positions.length < 1) return
-    // Deleting the only bar of a linked group would leave dangling markers — remove the copy instead.
-    if (sec && positions.length > 1 && sec.endMeasure === sec.startMeasure) return
-    const drop = new Set(positions)
-    const newCount = measureCount - positions.length
-    setTracks((prev) =>
-      prev.map((t) => {
-        const measures = t.measures.filter((_, i) => !drop.has(i))
-        let loops = t.loops
-        if (sec && src) {
-          const loop = loopLenFor(t, sec)
-          if (loop > 0 && m - sec.startMeasure < loop) {
-            loops = { ...loops }
-            if (loop <= 1) delete loops[src.id]
-            else loops[src.id] = loop - 1
-          }
-        }
-        return { ...t, measures, loops }
-      })
-    )
-    setMeasureCount(newCount)
-    setSections((prev) => {
-      const shifted = prev
-        .map((s) => {
-          const shift = positions.filter((p) => p < s.startMeasure).length
-          return shift ? { ...s, startMeasure: s.startMeasure - shift } : s
-        })
-        .map((s) => (s.startMeasure >= newCount ? { ...s, startMeasure: newCount - 1 } : s))
-      const deduped = dedupeSections(shifted).sort((a, b) => a.startMeasure - b.startMeasure)
-      if (deduped[0].startMeasure !== 0) deduped[0] = { ...deduped[0], startMeasure: 0 }
-      const ids = new Set(deduped.map((s) => s.id))
-      return deduped.map((s) => (s.linkTo != null && !ids.has(s.linkTo) ? { ...s, linkTo: undefined } : s))
+  // Structural edits and undo can invalidate the selection — drop it.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (!prev) return prev
+      const strings = activeTrack?.tuning.length ?? 0
+      const ok = (p: CellPos) => p.m < measureCount && p.s < strings
+      return ok(prev.anchor) && ok(prev.focus) ? prev : null
     })
-    setSelected(null)
-  }
+  }, [measureCount, activeTrack])
 
-  // ---- sections ----
-  const addSectionAt = (m: number) => {
-    if (sections.some((s) => s.startMeasure === m)) return
-    // Splitting a linked section — or a source that has linked copies — would break the mirroring.
-    const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-    if (sec && (sec.linkTo != null || sectionRanges.some((r) => r.linkTo === sec.id))) return
-    setSections((prev) => [...prev, { id: nextId(), name: 'New Section', startMeasure: m, comment: '' }])
-  }
-
-  // Append a linked copy of a section at the end of the song. It occupies real
-  // timeline bars but owns no content: reads and writes resolve to the source,
-  // so edits anywhere apply everywhere. Linking a linked copy links its source.
-  const addLinkedSection = (id: number) => {
-    const target = sectionRanges.find((r) => r.id === id)
-    if (!target) return
-    const src = resolveRange(target)
-    const span = src.endMeasure - src.startMeasure + 1
-    const start = measureCount
-    setTracks((prev) => prev.map((t) => ({ ...t, measures: [...t.measures, ...makeMeasures(t.tuning.length, span)] })))
-    setMeasureCount((c) => c + span)
-    setSections((prev) => [...prev, { id: nextId(), name: src.name, startMeasure: start, comment: '', linkTo: src.id }])
-  }
-
-  // Start a new section at measure m. If m is past the end, or another section
-  // already starts there (splitting after a middle section), a fresh measure is
-  // inserted at m first — shifting later sections right — so the new section is
-  // never empty and never collides.
-  const addSectionAfter = (m: number) => {
-    const collision = sections.some((s) => s.startMeasure === m)
-    if (m >= measureCount || collision) {
-      setTracks((prev) =>
-        prev.map((t) => {
-          const measures = t.measures.slice()
-          measures.splice(m, 0, ...makeMeasures(t.tuning.length, 1))
-          return { ...t, measures }
-        })
-      )
-      setMeasureCount((n) => n + 1)
-      setSections((prev) => [
-        ...prev.map((s) => (s.startMeasure >= m ? { ...s, startMeasure: s.startMeasure + 1 } : s)),
-        { id: nextId(), name: 'New Section', startMeasure: m, comment: '' },
-      ])
-    } else {
-      addSectionAt(m)
-    }
-  }
-
-  const renameSection = (id: number, name: string) => {
-    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)))
-  }
-
-  const updateSectionComment = (id: number, comment: string) => {
-    setSections((prev) => prev.map((s) => (s.id === id ? { ...s, comment } : s)))
-  }
-
-  // ×N for the active track over a section. N=1 turns the loop off. N>1 locks the
-  // track's current bars in as its loop unit and grows the section timeline to
-  // unit×N — other tracks gain real, editable bars there. Lowering N trims the
-  // section tail, but only when no track would lose written content.
-  const setTrackRepeat = (sectionId: number, times: number) => {
-    if (!activeTrack) return
-    const target = sectionRanges.find((r) => r.id === sectionId)
-    if (!target) return
-    const sec = resolveRange(target) // a linked copy's ×N acts on its source
-    const span = sec.endMeasure - sec.startMeasure + 1
-    const n = Math.max(1, Math.min(99, Math.round(times) || 1))
-    const unit = loopLenFor(activeTrack, sec) || span
-    // Every linked copy resizes in lockstep with the source.
-    const copies = sectionRanges.filter((r) => r.id === sec.id || r.linkTo === sec.id)
-    updateTrack(activeTrack.id, (t) => {
-      const loops = { ...(t.loops ?? {}) }
-      if (n > 1) loops[sec.id] = unit
-      else delete loops[sec.id]
-      return { ...t, loops }
-    })
-    setSelected(null)
-    if (n === 1) return
-    const desired = unit * n
-    if (desired > span) {
-      const extra = desired - span
-      const ats = copies.map((r) => r.endMeasure + 1).sort((a, b) => b - a)
-      setTracks((prev) =>
-        prev.map((t) => {
-          const measures = t.measures.slice()
-          ats.forEach((at) => measures.splice(at, 0, ...makeMeasures(t.tuning.length, extra)))
-          return { ...t, measures }
-        })
-      )
-      setMeasureCount((c) => c + extra * copies.length)
-      setSections((prev) =>
-        prev.map((s) => {
-          const shift = ats.filter((at) => s.startMeasure >= at).length * extra
-          return shift ? { ...s, startMeasure: s.startMeasure + shift } : s
-        })
-      )
-    } else if (desired < span) {
-      const cnt = span - desired
-      const froms = copies.map((r) => r.startMeasure + desired)
-      const safe = tracks.every((t) => {
-        const tLoop = t.id === activeTrack.id ? unit : loopLenFor(t, sec)
-        if (tLoop > 0 && tLoop <= desired) return true // cycled bars for this track — nothing real is shown there
-        return froms.every((from) =>
-          t.measures.slice(from, from + cnt).every((measure) => measure.every((col) => col.every((v) => v === null || v === '')))
-        )
-      })
-      if (!safe) return
-      const drop = new Set(froms.flatMap((from) => Array.from({ length: cnt }, (_, i) => from + i)))
-      setTracks((prev) => prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => !drop.has(i)) })))
-      setMeasureCount((c) => c - cnt * copies.length)
-      setSections((prev) =>
-        prev.map((s) => {
-          const shift = froms.filter((from) => s.startMeasure > from).length * cnt
-          return shift ? { ...s, startMeasure: s.startMeasure - shift } : s
-        })
-      )
-    }
-  }
-
-  const deleteSection = (id: number) => {
-    const sec = sectionRanges.find((r) => r.id === id)
-    if (!sec) return
-
-    // A linked copy owns no content — removing it removes its bars too.
-    if (sec.linkTo != null) {
-      const span = sec.endMeasure - sec.startMeasure + 1
-      if (measureCount - span < 1) return
-      setTracks((prev) =>
-        prev.map((t) => ({ ...t, measures: t.measures.filter((_, i) => i < sec.startMeasure || i > sec.endMeasure) }))
-      )
-      setMeasureCount((c) => c - span)
-      setSections((prev) => {
-        const next = prev
-          .filter((s) => s.id !== id)
-          .map((s) => (s.startMeasure > sec.endMeasure ? { ...s, startMeasure: s.startMeasure - span } : s))
-          .sort((a, b) => a.startMeasure - b.startMeasure)
-        if (next[0].startMeasure !== 0) next[0] = { ...next[0], startMeasure: 0 }
-        return next
-      })
-      setSelected(null)
+  // Debounced autosave once the song is in the library. Loading or switching
+  // songs isn't an edit — only changes after that count.
+  const skipAutosaveRef = useRef(true)
+  const autosaveSongIdRef = useRef(initial.id)
+  useEffect(() => {
+    if (skipAutosaveRef.current || autosaveSongIdRef.current !== song.id) {
+      skipAutosaveRef.current = false
+      autosaveSongIdRef.current = song.id
+      setDirty(false)
       return
     }
+    setDirty(true)
+    const timer = setTimeout(() => {
+      if (storage.listSongs().some((s) => s.id === song.id)) {
+        storage.saveSong({ ...song, updatedAt: Date.now() })
+        setLibrarySongs(storage.listSongs())
+      }
+      setDirty(false)
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [song])
 
-    if (sections.length <= 1) return
-    // Removing a source marker merges its bars into the previous section, so its
-    // linked copies materialize first: content and loops are written into their
-    // own bars and they become ordinary sections.
-    const mirrors = sectionRanges.filter((r) => r.linkTo === id)
-    if (mirrors.length) {
-      const span = sec.endMeasure - sec.startMeasure + 1
-      setTracks((prev) =>
-        prev.map((t) => {
-          const measures = t.measures.slice()
-          mirrors.forEach((mr) => {
-            for (let off = 0; off < span; off++) {
-              measures[mr.startMeasure + off] = measures[sec.startMeasure + off].map((col) => col.slice())
-            }
-          })
-          let loops = t.loops
-          if (loops?.[id]) {
-            loops = { ...loops }
-            mirrors.forEach((mr) => (loops![mr.id] = t.loops![id]))
-          }
-          return { ...t, measures, loops }
-        })
-      )
-    }
-    setSections((prev) => {
-      const next = prev
-        .filter((s) => s.id !== id)
-        .map((s) => (s.linkTo === id ? { ...s, linkTo: undefined } : s))
-        .sort((a, b) => a.startMeasure - b.startMeasure)
-      if (next[0].startMeasure !== 0) next[0] = { ...next[0], startMeasure: 0 }
-      return next
-    })
-    setTracks((prev) =>
-      prev.map((t) => {
-        if (!t.loops?.[id]) return t
-        const loops = { ...t.loops }
-        delete loops[id]
-        return { ...t, loops }
-      })
+  const focusGrid = () => gridRef.current?.focus({ preventScroll: true })
+
+  // ---- selection ----
+  const handleCellMouseDown = (m: number, c: number, s: number, shiftKey: boolean) => {
+    draggingRef.current = true
+    setSelected((prev) =>
+      shiftKey && prev ? { anchor: prev.anchor, focus: { m, c, s } } : { anchor: { m, c, s }, focus: { m, c, s } }
     )
+    focusGrid()
+  }
+
+  const handleCellEnter = (m: number, c: number, s: number) => {
+    if (!draggingRef.current) return
+    setSelected((prev) => (prev ? { anchor: prev.anchor, focus: { m, c, s } } : prev))
+  }
+
+  // ---- clipboard ----
+  const putOnClipboard = (payload: ClipboardPayload) => {
+    setClip(payload)
+    navigator.clipboard?.writeText(JSON.stringify(payload)).catch(() => {})
+  }
+
+  const copySelection = () => {
+    if (!selected || !activeTrack) return
+    putOnClipboard(copyRange(activeTrack, normalizeRect(selected)))
+    showToast('Copied')
+  }
+
+  const cutSelection = () => {
+    if (!selected || !activeTrack) return
+    const rect = normalizeRect(selected)
+    putOnClipboard(copyRange(activeTrack, rect))
+    dispatch({ type: 'clear-range', trackId: activeTrack.id, rect })
+    showToast('Cut')
+  }
+
+  const pasteAtSelection = async () => {
+    if (!selected || !activeTrack) return
+    let payload = clip
+    try {
+      const parsed = parsePayload(await navigator.clipboard.readText())
+      if (parsed) payload = parsed
+    } catch {
+      // OS clipboard unavailable — the internal one still works
+    }
+    if (!payload) {
+      showToast('Nothing to paste')
+      return
+    }
+    if (payload.kind === 'tab-editor/cells') {
+      const rect = normalizeRect(selected)
+      const at = { m: Math.floor(rect.col0 / COLS_PER_MEASURE), c: rect.col0 % COLS_PER_MEASURE, s: rect.s0 }
+      dispatch({ type: 'paste-cells', trackId: activeTrack.id, at, clip: payload })
+    } else {
+      const sec = sectionRanges.find((r) => selected.focus.m >= r.startMeasure && selected.focus.m <= r.endMeasure)
+      if (sec) {
+        dispatch({ type: 'paste-section', at: sec.endMeasure + 1, clip: payload })
+        showToast('Section pasted')
+      }
+    }
+  }
+
+  const copySection = (id: number) => {
+    const sec = sectionRanges.find((r) => r.id === id)
+    if (!sec) return
+    putOnClipboard(sectionToClipboard(tracks, sec, song.id, song.measureNotes))
+    showToast('Section copied')
+  }
+
+  const pasteSectionAt = (at: number) => {
+    if (clip?.kind !== 'tab-editor/section') return
+    dispatch({ type: 'paste-section', at, clip })
+  }
+
+  // ---- measures & sections ----
+  const deleteMeasure = (m: number) => {
+    if (measureCount <= 1) {
+      showToast("Can't delete the last measure")
+      return
+    }
+    dispatch({ type: 'delete-measure', m })
+  }
+
+  const addSectionHere = () => {
+    const m = selected ? selected.focus.m : measureCount - 1
+    if (sections.some((s) => s.startMeasure === m)) {
+      showToast('A section already starts here')
+      return
+    }
+    dispatch({ type: 'add-section-at', m })
   }
 
   const jumpToSection = (id: number) => {
@@ -446,67 +250,34 @@ export default function App() {
   // ---- tracks ----
   const addTrack = () => {
     const t = makeTrack(`Track ${tracks.length + 1}`, defaultTuning(), measureCount)
-    setTracks((prev) => [...prev, t])
+    dispatch({ type: 'add-track', track: t })
     setActiveTrackId(t.id)
-    setTuningEditorTrackId(t.id)
   }
 
   const removeTrack = (id: number) => {
     if (tracks.length <= 1) return
-    setTracks((prev) => prev.filter((t) => t.id !== id))
-    if (activeTrackId === id) {
-      const remaining = tracks.filter((t) => t.id !== id)
-      setActiveTrackId(remaining[0]?.id)
-    }
+    dispatch({ type: 'remove-track', id })
+    if (activeTrackId === id) setActiveTrackId(tracks.filter((t) => t.id !== id)[0]?.id)
     if (tuningEditorTrackId === id) setTuningEditorTrackId(null)
-  }
-
-  const renameTrack = (id: number, name: string) => updateTrack(id, (t) => ({ ...t, name }))
-
-  const setTrackTuning = (id: number, newTuning: Track['tuning']) => {
-    updateTrack(id, (t) => {
-      const len = newTuning.length
-      const measures = t.measures.map((measure) =>
-        measure.map((col) => {
-          const next = col.slice(0, len)
-          while (next.length < len) next.push(null)
-          return next
-        })
-      )
-      return { ...t, tuning: newTuning, measures }
-    })
+    showToast('Track removed — Ctrl+Z to undo')
   }
 
   // ---- song lifecycle ----
-  const clearAll = () => {
-    if (!window.confirm('Clear the whole song? This removes all tracks and sections.')) return
+  const applySong = (next: Song) => {
     stopPlayback()
-    const blank = blankSong()
-    setSongId(blank.id)
-    setTitle(blank.title)
-    setMeasureCount(blank.measureCount)
-    setSections(blank.sections)
-    setTracks(blank.tracks)
-    setActiveTrackId(blank.tracks[0].id)
+    const maxId = Math.max(0, ...next.sections.map((s) => s.id), ...next.tracks.map((t) => t.id))
+    advanceIdCounter(maxId)
+    dispatch({ type: 'load-song', song: next })
+    setActiveTrackId(next.tracks[0]?.id)
     setSelected(null)
     setTuningEditorTrackId(null)
   }
 
-  const buildSnapshot = (): Song => ({
-    id: songId,
-    title,
-    bpm,
-    measureCount,
-    sections,
-    tracks,
-    updatedAt: Date.now(),
-  })
-
   const handleSave = () => {
-    storage.saveSong(buildSnapshot())
+    storage.saveSong({ ...song, updatedAt: Date.now() })
     setLibrarySongs(storage.listSongs())
-    setSaveStatus('Saved!')
-    setTimeout(() => setSaveStatus(''), 2000)
+    setDirty(false)
+    showToast('Saved')
   }
 
   const exportLibrary = () => {
@@ -520,38 +291,20 @@ export default function App() {
   }
 
   const importLibrary = async (file: File) => {
-    let status: string
     try {
       const count = storage.importLibrary(await file.text())
       setLibrarySongs(storage.listSongs())
-      status = `Imported ${count}`
+      showToast(`Imported ${count}`)
     } catch {
-      status = 'Import failed'
+      showToast('Import failed')
     }
-    setSaveStatus(status)
-    setTimeout(() => setSaveStatus(''), 2000)
-  }
-
-  const applySong = (song: Song) => {
-    stopPlayback()
-    const maxId = Math.max(0, ...song.sections.map((s) => s.id), ...song.tracks.map((t) => t.id))
-    advanceIdCounter(maxId)
-    setSongId(song.id)
-    setTitle(song.title)
-    setBpm(song.bpm)
-    setMeasureCount(song.measureCount)
-    setSections(song.sections)
-    setTracks(song.tracks)
-    setActiveTrackId(song.tracks[0]?.id)
-    setSelected(null)
-    setTuningEditorTrackId(null)
   }
 
   const loadSongFromLibrary = (id: string) => {
-    const song = storage.loadSong(id)
-    if (!song) return
+    const loaded = storage.loadSong(id)
+    if (!loaded) return
     storage.setLastOpenedId(id)
-    applySong(song)
+    applySong(loaded)
   }
 
   const deleteSongFromLibrary = (id: string) => {
@@ -559,272 +312,243 @@ export default function App() {
     setLibrarySongs(storage.listSongs())
   }
 
-  const newSong = () => {
-    stopPlayback()
-    const blank = blankSong()
-    setSongId(blank.id)
-    setTitle(blank.title)
-    setBpm(blank.bpm)
-    setMeasureCount(blank.measureCount)
-    setSections(blank.sections)
-    setTracks(blank.tracks)
-    setActiveTrackId(blank.tracks[0].id)
-    setSelected(null)
-    setTuningEditorTrackId(null)
-  }
+  const newSong = () => applySong(blankSong())
 
   // ---- keyboard editing (active track only) ----
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLDivElement>) => {
-      // Don't hijack typing in text fields (section names, comments, repeat counts).
-      const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
-      if (!selected || !activeTrack) return
-      const { m, c, s } = selected
-      // Cells in a linked section read and write their source's measure.
-      const mm = srcMeasureIndex(m)
-      const measure = activeTrack.measures[mm]
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // Don't hijack typing in text fields (section names, comments, measure notes).
+    const target = e.target as HTMLElement
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
 
-      if (e.key >= '0' && e.key <= '9') {
-        e.preventDefault()
-        const current = measure[c][s]
-        let next = current === null ? e.key : String(Number(current + e.key))
-        if (next.length > 2 || Number(next) > 24) next = e.key
-        setCell(activeTrack.id, mm, c, s, next)
-        return
-      }
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        e.preventDefault()
-        setCell(activeTrack.id, mm, c, s, null)
-        return
-      }
-      const moveTo = (nm: number, nc: number, ns: number) => {
-        e.preventDefault()
-        setSelected({ m: nm, c: nc, s: ns })
-      }
-      if (e.key === 'ArrowUp') {
-        if (s > 0) moveTo(m, c, s - 1)
-        return
-      }
-      if (e.key === 'ArrowDown') {
-        if (s < activeTrack.tuning.length - 1) moveTo(m, c, s + 1)
-        return
-      }
-      // Ghost measures (a looped track's cycled bars) aren't editable — skip them.
-      const nextEditableMeasure = (from: number, dir: 1 | -1): number | null => {
-        for (let mm = from; mm >= 0 && mm < measureCount; mm += dir) {
-          if (!isGhostMeasure(mm)) return mm
-        }
-        return null
-      }
-      if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
-        e.preventDefault()
-        if (c > 0) moveTo(m, c - 1, s)
-        else {
-          const pm = nextEditableMeasure(m - 1, -1)
-          if (pm !== null) moveTo(pm, COLS_PER_MEASURE - 1, s)
-        }
-        return
-      }
-      if (e.key === 'ArrowRight' || e.key === 'Tab') {
-        e.preventDefault()
-        if (c < COLS_PER_MEASURE - 1) {
-          moveTo(m, c + 1, s)
-          return
-        }
-        const nm = nextEditableMeasure(m + 1, 1)
-        if (nm !== null) moveTo(nm, 0, s)
-        else {
-          const lastSec = sectionRanges[sectionRanges.length - 1]
-          if (lastSec && lastSec.linkTo == null && loopLenFor(activeTrack, lastSec) === 0) {
-            addMeasureAtEnd()
-            moveTo(measureCount, 0, s)
-          }
-        }
-        return
-      }
-      if (e.key === 'Escape') setSelected(null)
-    },
-    [selected, activeTrack, measureCount, setCell, sectionRanges, isGhostMeasure, loopLenFor, srcMeasureIndex]
-  )
+    if (e.key === ' ') {
+      e.preventDefault()
+      if (isPlaying) stopPlayback()
+      else startPlayback(selected ? globalCol(selected.focus.m, selected.focus.c) : 0)
+      return
+    }
 
-  // ---- playback: mixes every track together ----
+    const ctrl = e.ctrlKey || e.metaKey
+    if (ctrl) {
+      const key = e.key.toLowerCase()
+      if (key === 'c') {
+        e.preventDefault()
+        copySelection()
+        return
+      }
+      if (key === 'x') {
+        e.preventDefault()
+        cutSelection()
+        return
+      }
+      if (key === 'v') {
+        e.preventDefault()
+        void pasteAtSelection()
+        return
+      }
+    }
+
+    if (!selected || !activeTrack) return
+    const { focus } = selected
+
+    const setFocus = (m: number, c: number, s: number, extend: boolean) => {
+      e.preventDefault()
+      const f = { m, c, s }
+      setSelected((prev) => (extend && prev ? { anchor: prev.anchor, focus: f } : { anchor: f, focus: f }))
+    }
+
+    if (e.key >= '0' && e.key <= '9') {
+      e.preventDefault()
+      const current = activeTrack.measures[focus.m][focus.c][focus.s]
+      let next = current === null || current === '' ? e.key : String(Number(current + e.key))
+      if (next.length > 2 || Number(next) > 24) next = e.key
+      dispatch({ type: 'set-cell', trackId: activeTrack.id, m: focus.m, c: focus.c, s: focus.s, value: next })
+      setSelected({ anchor: focus, focus })
+      return
+    }
+
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      e.preventDefault()
+      dispatch({ type: 'clear-range', trackId: activeTrack.id, rect: normalizeRect(selected) })
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      if (focus.s > 0) setFocus(focus.m, focus.c, focus.s - 1, e.shiftKey)
+      else e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      if (focus.s < activeTrack.tuning.length - 1) setFocus(focus.m, focus.c, focus.s + 1, e.shiftKey)
+      else e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
+      e.preventDefault()
+      if (focus.c > 0) setFocus(focus.m, focus.c - 1, focus.s, e.shiftKey)
+      else if (focus.m > 0) setFocus(focus.m - 1, COLS_PER_MEASURE - 1, focus.s, e.shiftKey)
+      return
+    }
+    if (e.key === 'ArrowRight' || e.key === 'Tab') {
+      e.preventDefault()
+      if (focus.c < COLS_PER_MEASURE - 1) setFocus(focus.m, focus.c + 1, focus.s, e.shiftKey)
+      else if (focus.m < measureCount - 1) setFocus(focus.m + 1, 0, focus.s, e.shiftKey)
+      else {
+        // At the very end the grid grows under the cursor.
+        dispatch({ type: 'insert-measure', after: measureCount - 1 })
+        setFocus(measureCount, 0, focus.s, false)
+      }
+      return
+    }
+    if (e.key === 'Escape') setSelected(null)
+  }
+
+  // ---- playback: mixes every track together, plus the reference video ----
+  // A lookahead scheduler (the standard Web Audio pattern), not a naive
+  // setTimeout-per-note loop: notes are scheduled onto the audio clock a bit
+  // ahead of when they sound, so JS event-loop jitter (React renders, GC)
+  // never delays the audio itself — it can only delay how far ahead we
+  // schedule, which a 150ms lookahead window comfortably absorbs.
   const stopPlayback = useCallback(() => {
     if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current)
     playTimeoutRef.current = null
+    visualTimeoutsRef.current.forEach((id) => clearTimeout(id))
+    visualTimeoutsRef.current = []
     setIsPlaying(false)
     setPlayhead(null)
+    ytRef.current?.pause()
   }, [])
 
-  const startPlayback = () => {
+  const startPlayback = (fromStep = 0) => {
     resumeAudio()
     setIsPlaying(true)
-    const stepMs = (60 / bpm / 2) * 1000 // 8th notes
+    const stepDuration = 60 / bpm / 2 // seconds per 8th note
+    const scheduleAhead = 0.15
+    const tickMs = 25
 
     const totalSteps = measureCount * COLS_PER_MEASURE
-    let i = 0
+    let i = Math.max(0, Math.min(fromStep, totalSteps - 1))
+    let nextStepTime = now() + 0.05
 
-    const step = () => {
-      if (i >= totalSteps) {
-        stopPlayback()
-        return
-      }
-      const m = Math.floor(i / COLS_PER_MEASURE)
-      const c = i % COLS_PER_MEASURE
-      setPlayhead({ m, c })
-      const t = now()
+    if (youtube) ytRef.current?.seekAndPlay(videoSecondsForCol(youtube, bpm, COLS_PER_MEASURE, i))
+
+    const scheduleStep = (stepIndex: number, time: number) => {
+      const m = Math.floor(stepIndex / COLS_PER_MEASURE)
+      const c = stepIndex % COLS_PER_MEASURE
       tracks.forEach((track) => {
-        // A linked section plays its source; a looping track cycles its loop unit.
-        const sec = sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)
-        const src = sec ? resolveRange(sec) : undefined
-        const loop = src ? loopLenFor(track, src) : 0
-        const off = sec ? m - sec.startMeasure : 0
-        const tm = sec && src ? src.startMeasure + (loop > 0 ? off % loop : off) : m
-        const col = track.measures[tm]?.[c]
+        const col = track.measures[m]?.[c]
         if (!col) return
         col.forEach((fret, s) => {
           if (fret === null || fret === '') return
           const freq = midiToFreq(stringMidi(track.tuning[s]) + Number(fret))
-          playNote(freq, t)
+          playNote(freq, time)
         })
       })
-      i += 1
-      playTimeoutRef.current = setTimeout(step, stepMs)
+      const visualDelayMs = Math.max(0, (time - now()) * 1000)
+      visualTimeoutsRef.current.push(setTimeout(() => setPlayhead({ m, c }), visualDelayMs))
     }
-    step()
+
+    const tick = () => {
+      while (i < totalSteps && nextStepTime < now() + scheduleAhead) {
+        scheduleStep(i, nextStepTime)
+        nextStepTime += stepDuration
+        i += 1
+      }
+      if (i >= totalSteps) {
+        playTimeoutRef.current = setTimeout(stopPlayback, Math.max(0, (nextStepTime - now()) * 1000))
+        return
+      }
+      playTimeoutRef.current = setTimeout(tick, tickMs)
+    }
+    tick()
   }
 
   useEffect(() => stopPlayback, [stopPlayback])
 
-  // ---- export ----
-  const exportText = useMemo(() => {
-    const parts = [`# ${title}`, '']
-    tracks.forEach((track) => {
-      parts.push(`-- ${track.name} --`)
-      sectionRanges.forEach((sec) => {
-        const src = resolveRange(sec)
-        const loop = loopLenFor(track, src)
-        const span = src.endMeasure - src.startMeasure + 1
-        const loopSuffix = loop > 0 ? ` x${Math.ceil(span / loop)}` : ''
-        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => src.startMeasure + off)
-        const isEmpty = measureIndices.every((m) =>
-          (track.measures[m] ?? []).every((col) => col.every((fret) => fret === null || fret === ''))
-        )
-        if (isEmpty) return
-        // A linked section prints a reference to its source instead of repeating the bars.
-        if (src !== sec) {
-          parts.push(`== ${sec.name} = ${src.name}${loopSuffix} ==`, '')
-          return
-        }
-        parts.push(`== ${sec.name}${loopSuffix} ==`)
-        if (sec.comment) parts.push(`# ${sec.comment}`)
-        // One column width for the whole section: any 2-digit fret widens every column.
-        const width = Math.max(
-          2,
-          ...measureIndices.flatMap((m) =>
-            (track.measures[m] ?? []).map(
-              (col) => Math.max(...col.map((fret) => (fret === null ? 1 : String(fret).length))) + 1
-            )
-          )
-        )
-        chunkMeasures(measureIndices).forEach((lineMeasures) => {
-          const lines = track.tuning.map((str) => midiToNoteName(stringMidi(str)).padEnd(2, ' ') + '|')
-          lineMeasures.forEach((m) => {
-            const measure = track.measures[m]
-            if (!measure) return
-            measure.forEach((col, ci) => {
-              col.forEach((fret, s) => {
-                const label = fret === null ? '-' : String(fret)
-                lines[s] += (ci === 0 ? ' ' : '') + label.padEnd(width, ' ')
-              })
-            })
-            lines.forEach((_, s) => (lines[s] += '|'))
-          })
-          parts.push(...lines)
-          parts.push('')
-        })
-      })
-    })
-    return parts.join('\n')
-  }, [title, sectionRanges, tracks, loopLenFor, resolveRange])
+  const exportText = useMemo(() => buildExportText({ ...song, updatedAt: 0 }), [song])
 
-  const copyExport = async () => {
-    try {
-      await navigator.clipboard.writeText(exportText)
-      setCopyStatus('Copied!')
-    } catch {
-      setCopyStatus('Copy failed — select the text manually')
-    }
-    setTimeout(() => setCopyStatus(''), 2000)
-  }
+  const activeSectionId = useMemo(() => {
+    const m = playhead?.m ?? selected?.focus.m
+    if (m == null) return null
+    return sectionRanges.find((r) => m >= r.startMeasure && m <= r.endMeasure)?.id ?? null
+  }, [playhead, selected, sectionRanges])
 
-  const isSongSaved = librarySongs.some((s) => s.id === songId)
+  const totalSteps = measureCount * COLS_PER_MEASURE
+  const playProgress = playhead ? globalCol(playhead.m, playhead.c) / Math.max(1, totalSteps - 1) : null
+  const measureNotes = song.measureNotes ?? []
 
   return (
-    <div className="flex items-start">
+    <div className="flex flex-col md:flex-row items-start">
       <SongSidebar
         songs={librarySongs}
-        currentSongId={songId}
+        currentSongId={song.id}
+        isAutosaved={!dirty}
         onLoad={loadSongFromLibrary}
         onDelete={deleteSongFromLibrary}
         onNew={newSong}
         onSave={handleSave}
         onExport={exportLibrary}
         onImport={importLibrary}
-        saveStatus={saveStatus}
       />
 
-      <div className="min-w-0 flex-1 max-w-[1100px] mx-auto px-5 pt-6 pb-16">
-        <Toolbar
-          title={title}
-          onTitleChange={setTitle}
-          bpm={bpm}
-          onBpmChange={setBpm}
-          isPlaying={isPlaying}
-          onPlay={startPlayback}
-          onStop={stopPlayback}
-          onAddMeasure={addMeasureAtEnd}
-          onAddSection={() => addSectionAt(selected ? selected.m : measureCount - 1)}
-          onClear={clearAll}
-          onCopy={copyExport}
-          copyStatus={copyStatus}
-          onSave={handleSave}
-          saveStatus={saveStatus}
-          isSaved={isSongSaved}
+      <div className="min-w-0 flex-1 max-w-[1100px] mx-auto px-5 pt-6 pb-24">
+        <input
+          className="block w-full bg-transparent border-none outline-none font-display font-semibold text-[2.25rem] leading-tight tracking-tight text-ink py-1 mb-3 placeholder-ink-faint"
+          value={title}
+          onChange={(e) => dispatch({ type: 'set-title', title: e.target.value })}
+          placeholder="Untitled Song"
         />
 
-        <TrackTabs
-          tracks={tracks}
-          activeTrackId={activeTrackId}
-          onSelect={setActiveTrackId}
-          onRename={renameTrack}
-          onEditTuning={setTuningEditorTrackId}
-          onRemove={removeTrack}
-          onAdd={addTrack}
-        />
+        {/* Pinned so the track switcher and section jump stay reachable
+            while scrolling a long tab — only the score body scrolls
+            underneath. Add-measure/add-section live in the bottom transport
+            bar alongside playback, so every editing action stays in one
+            fixed place regardless of scroll position. */}
+        <div data-keep-selection className="sticky top-0 z-20 bg-plate pt-1 pb-3 -mx-5 px-5 border-b border-hairline-strong">
+          <TrackTabs
+            tracks={tracks}
+            activeTrackId={activeTrackId}
+            onSelect={setActiveTrackId}
+            onRename={(id, name) => dispatch({ type: 'rename-track', id, name })}
+            onEditTuning={setTuningEditorTrackId}
+            onRemove={removeTrack}
+            onAdd={addTrack}
+          />
 
-        <SectionNav sectionRanges={sectionRanges} onJump={jumpToSection} />
+          <SectionNav
+            sectionRanges={sectionRanges}
+            activeSectionId={activeSectionId}
+            canPaste={clip?.kind === 'tab-editor/section'}
+            onJump={jumpToSection}
+            onAddAt={(m) => dispatch({ type: 'add-section-after', m })}
+            onPasteAt={pasteSectionAt}
+            onLink={(id, to) => dispatch({ type: 'link-section', id, to })}
+            onUnlink={(id) => dispatch({ type: 'unlink-section', id })}
+          />
+        </div>
 
         {activeTrack && (
           <TabGrid
-            activeTrack={viewTrack ?? activeTrack}
+            className="mt-4"
+            track={activeTrack}
             sectionRanges={sectionRanges}
             measureCount={measureCount}
+            measureNotes={measureNotes}
             canDeleteSection={sections.length > 1}
             selected={selected}
             playhead={playhead}
-            onSelectCell={(m, c, s) =>
-              setSelected((prev) => (prev && prev.m === m && prev.c === c && prev.s === s ? null : { m, c, s }))
-            }
+            gridRef={gridRef}
+            onCellMouseDown={handleCellMouseDown}
+            onCellEnter={handleCellEnter}
             onDeleteMeasure={deleteMeasure}
-            onInsertMeasureAfter={insertMeasureAfter}
-            onAddSectionAfter={addSectionAfter}
-            onLinkSection={addLinkedSection}
-            onRenameSection={renameSection}
-            onCommentChange={updateSectionComment}
-            activeLoops={activeLoops}
-            onRepeatChange={setTrackRepeat}
-            onDeleteSection={deleteSection}
+            onInsertMeasureAfter={(m) => dispatch({ type: 'insert-measure', after: m })}
+            onRenameSection={(id, name) => dispatch({ type: 'rename-section', id, name })}
+            onCommentChange={(id, text) => dispatch({ type: 'set-section-comment', id, text })}
+            onTrackCommentChange={(id, text) =>
+              dispatch({ type: 'set-section-comment', id, trackId: activeTrack.id, text })
+            }
+            onCopySection={copySection}
+            onDeleteSection={(id) => dispatch({ type: 'delete-section', id })}
+            onSetTrackLoop={(sectionId, unit) => dispatch({ type: 'set-track-loop', trackId: activeTrack.id, sectionId, unit })}
+            onSetMeasureNote={(m, text) => dispatch({ type: 'set-measure-note', m, text })}
             onKeyDown={handleKeyDown}
             registerSectionRef={(id, el) => {
               sectionRefs.current[id] = el
@@ -836,13 +560,37 @@ export default function App() {
           <TuningEditor
             trackName={tracks.find((t) => t.id === tuningEditorTrackId)?.name ?? ''}
             tuning={tracks.find((t) => t.id === tuningEditorTrackId)?.tuning ?? []}
-            onChange={(next) => setTrackTuning(tuningEditorTrackId, next)}
+            onChange={(next) => dispatch({ type: 'set-track-tuning', id: tuningEditorTrackId, tuning: next })}
             onClose={() => setTuningEditorTrackId(null)}
           />
         )}
 
         <ExportPanel text={exportText} />
       </div>
+
+      <YoutubeSyncPanel
+        ref={ytRef}
+        youtube={youtube}
+        anchorMeasure={selected?.focus.m ?? playhead?.m ?? 0}
+        onSetVideo={(videoId) => dispatch({ type: 'set-youtube-video', videoId })}
+        onSetAnchor={(measure, seconds) => dispatch({ type: 'set-youtube-anchor', measure, seconds })}
+      />
+
+      <TransportBar
+        bpm={bpm}
+        onBpmChange={(b) => dispatch({ type: 'set-bpm', bpm: b })}
+        isPlaying={isPlaying}
+        hasSelection={selected !== null}
+        progress={playProgress}
+        onPlay={() => startPlayback(selected ? globalCol(selected.focus.m, selected.focus.c) : 0)}
+        onPlayFromStart={() => startPlayback(0)}
+        onStop={stopPlayback}
+        onSeek={(fraction) => startPlayback(Math.round(fraction * (totalSteps - 1)))}
+        onAddMeasure={() => dispatch({ type: 'insert-measure', after: measureCount - 1 })}
+        onAddSection={addSectionHere}
+      />
+
+      <Toast message={toastMsg} />
     </div>
   )
 }

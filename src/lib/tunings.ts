@@ -16,11 +16,6 @@ export function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12)
 }
 
-export function midiToLabel(midi: number): string {
-  const { noteIndex, octave } = midiToNoteOctave(midi)
-  return `${NOTE_NAMES[noteIndex]}${octave}`
-}
-
 export function midiToNoteName(midi: number): string {
   const { noteIndex } = midiToNoteOctave(midi)
   return NOTE_NAMES[noteIndex]

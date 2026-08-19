@@ -11,7 +11,7 @@ export interface Track {
   name: string
   tuning: StringTuning[]
   measures: Measure[]
-  /** sectionId → bars this track cycles across that section; absent/0 = play through */
+  /** sectionId → bars this track loops within that section (unit < span); bars unit..span-1 mirror 0..unit-1 */
   loops?: Record<number, number>
 }
 
@@ -19,15 +19,25 @@ export interface Section {
   id: number
   name: string
   startMeasure: number
+  /** song-wide note */
   comment?: string
-  /** id of the section this one mirrors — its bars read/write the source's */
+  /** trackId → note shown only for that track */
+  trackComments?: Record<number, string>
+  /** id of the section this one mirrors — every edit writes to all copies */
   linkTo?: number
-  /** legacy global repeat — migrated to written-out measures + per-track loops on load */
-  repeat?: number
+  /** index into SECTION_COLORS; absent = neutral */
+  colorIndex?: number
 }
 
 export interface SectionRange extends Section {
   endMeasure: number
+}
+
+export interface YoutubeSync {
+  videoId: string
+  /** downbeat this anchor pins — column anchorMeasure*COLS_PER_MEASURE */
+  anchorMeasure: number
+  anchorSeconds: number
 }
 
 export interface Song {
@@ -38,12 +48,20 @@ export interface Song {
   sections: Section[]
   tracks: Track[]
   updatedAt: number
+  /** measureNotes[m] — free-text annotation for that measure, shared across tracks; parallel to measureCount */
+  measureNotes?: string[]
+  youtube?: YoutubeSync
 }
 
-export interface Selection {
+export interface CellPos {
   m: number
   c: number
   s: number
+}
+
+export interface RangeSelection {
+  anchor: CellPos
+  focus: CellPos
 }
 
 export interface Playhead {

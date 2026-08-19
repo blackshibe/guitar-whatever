@@ -1,190 +1,284 @@
-import type { KeyboardEvent } from 'react'
-import type { Playhead, SectionRange, Selection, Track } from '../types'
+import { type KeyboardEvent, type RefObject, useEffect } from 'react'
+import type { Playhead, RangeSelection, SectionRange, Track } from '../types'
 import { midiToNoteName } from '../lib/tunings'
-import { chunkMeasures, stringMidi } from '../lib/instruments'
+import { COLS_PER_MEASURE, chunkMeasures, stringMidi } from '../lib/instruments'
+import { globalCol, normalizeRect } from '../lib/clipboard'
+import { tieColor } from '../lib/sectionColors'
+import { CloseIcon } from './Icons'
 
 interface Props {
-  activeTrack: Track
+  className?: string
+  track: Track
   sectionRanges: SectionRange[]
   measureCount: number
+  measureNotes: string[]
   canDeleteSection: boolean
-  selected: Selection | null
+  selected: RangeSelection | null
   playhead: Playhead | null
-  onSelectCell: (m: number, c: number, s: number) => void
+  gridRef: RefObject<HTMLDivElement | null>
+  onCellMouseDown: (m: number, c: number, s: number, shiftKey: boolean) => void
+  onCellEnter: (m: number, c: number, s: number) => void
   onDeleteMeasure: (m: number) => void
   onInsertMeasureAfter: (m: number) => void
-  onAddSectionAfter: (m: number) => void
-  onLinkSection: (id: number) => void
   onRenameSection: (id: number, name: string) => void
   onCommentChange: (id: number, comment: string) => void
-  activeLoops: Record<number, number>
-  onRepeatChange: (sectionId: number, times: number) => void
+  onTrackCommentChange: (id: number, comment: string) => void
+  onCopySection: (id: number) => void
   onDeleteSection: (id: number) => void
+  onSetTrackLoop: (sectionId: number, unit: number | null) => void
+  onSetMeasureNote: (m: number, text: string) => void
   onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => void
   registerSectionRef: (id: number, el: HTMLDivElement | null) => void
 }
 
-const headerBtn = 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs px-2.5 py-1.5'
-const dangerHeaderBtn = 'bg-neutral-800 hover:bg-rose-900 hover:text-rose-300 text-neutral-300 text-xs px-2.5 py-1.5'
+const headerBtn = 'text-ink-faint hover:text-ink text-xs px-2 py-1.5 border-b border-transparent hover:border-hairline-strong'
+const dangerHeaderBtn = 'text-ink-faint hover:text-accent text-xs px-2 py-1.5 border-b border-transparent hover:border-accent/40'
+const CELL_W = 28
 
 export default function TabGrid({
-  activeTrack,
+  className = '',
+  track,
   sectionRanges,
   measureCount,
+  measureNotes,
   canDeleteSection,
   selected,
   playhead,
-  onSelectCell,
+  gridRef,
+  onCellMouseDown,
+  onCellEnter,
   onDeleteMeasure,
   onInsertMeasureAfter,
-  onAddSectionAfter,
-  onLinkSection,
   onRenameSection,
   onCommentChange,
-  activeLoops,
-  onRepeatChange,
+  onTrackCommentChange,
+  onCopySection,
   onDeleteSection,
+  onSetTrackLoop,
+  onSetMeasureNote,
   onKeyDown,
   registerSectionRef,
 }: Props) {
+  const rect = selected ? normalizeRect(selected) : null
+  const focus = selected?.focus ?? null
+
+  // Keep the playing line in view.
+  useEffect(() => {
+    if (!playhead) return
+    const root = gridRef.current
+    if (!root) return
+    for (const el of root.querySelectorAll<HTMLElement>('[data-line-start]')) {
+      const start = Number(el.dataset.lineStart)
+      const end = Number(el.dataset.lineEnd)
+      if (playhead.m >= start && playhead.m <= end) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+        break
+      }
+    }
+  }, [playhead, gridRef])
+
+  // Enter/Escape hands focus back to the grid so keys keep working.
+  const headerInputKeyDown = (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      e.preventDefault()
+      ;(e.target as HTMLElement).blur()
+      gridRef.current?.focus({ preventScroll: true })
+    }
+  }
+
+  // The focused cell reads as a caret (a vertical line at its leading edge),
+  // the same visual language as the playhead rule, rather than a boxed
+  // highlight — one grid, one way of marking "the current position."
+  const cellClass = (m: number, c: number, s: number, hasValue: boolean): string => {
+    const g = globalCol(m, c)
+    const inRect = rect !== null && g >= rect.col0 && g <= rect.col1 && s >= rect.s0 && s <= rect.s1
+    const isFocus = focus !== null && focus.m === m && focus.c === c && focus.s === s
+    return (
+      'relative h-[27px] shrink-0 border-0 border-b border-hairline text-[13px] p-0 m-0 select-none font-mono transition-colors duration-150 ease-out ' +
+      (isFocus ? 'border-l-2 border-l-accent bg-accent/10' : inRect ? 'bg-accent/10' : 'bg-transparent hover:bg-plate-sunken') +
+      ' ' +
+      (hasValue ? 'text-ink font-semibold' : 'text-ink-faint')
+    )
+  }
+
+  // Left margin (40px note-name column + 14px opening bar) plus one measure
+  // block (CELL_W*8 cells + 14px trailing bar) per line, repeated per measure
+  // index — the geometry the playhead overlay glides across.
+  const playheadLeft = (lineMeasures: number[]): number | null => {
+    if (!playhead) return null
+    const mi = lineMeasures.indexOf(playhead.m)
+    if (mi === -1) return null
+    return 54 + mi * (CELL_W * COLS_PER_MEASURE + 14) + playhead.c * CELL_W
+  }
+
   return (
-    <div className="outline-none overflow-x-auto bg-neutral-900 border border-neutral-800 p-4" onKeyDown={onKeyDown} tabIndex={0}>
+    <div
+      ref={gridRef}
+      data-grid
+      className={`outline-none overflow-x-auto bg-plate border border-hairline-strong p-5 ${className}`}
+      onKeyDown={onKeyDown}
+      tabIndex={0}
+    >
       {sectionRanges.map((sec) => {
-        const src = sec.linkTo != null ? sectionRanges.find((r) => r.id === sec.linkTo) : undefined
         const span = sec.endMeasure - sec.startMeasure + 1
-        const loop = activeLoops[sec.id] ?? 0
-        const times = loop > 0 ? Math.ceil(span / loop) : 1
-        // A looping track shows only its loop unit; the rest of the section span
-        // exists on the timeline (other tracks fill it) but is hidden here.
-        const measureIndices = Array.from({ length: loop > 0 ? loop : span }, (_, off) => sec.startMeasure + off)
-        // Map the timeline playhead into the loop unit so it cycles on screen.
-        const playheadMeasure =
-          playhead && loop > 0 && playhead.m >= sec.startMeasure && playhead.m <= sec.endMeasure
-            ? sec.startMeasure + ((playhead.m - sec.startMeasure) % loop)
-            : playhead?.m ?? null
+        const measureIndices = Array.from({ length: span }, (_, off) => sec.startMeasure + off)
+        const linked = sec.linkTo != null
+        const loopUnit = track.loops?.[sec.id]
+
         return (
           <div
-            className="border-t border-neutral-800 first:border-t-0 pt-3.5 first:pt-0 mb-2.5 scroll-mt-4"
+            className="border-l-[3px] border-hairline-strong pl-3.5 mt-4 first:mt-0 mb-3 scroll-mt-[190px]"
             key={sec.id}
             ref={(el) => registerSectionRef(sec.id, el)}
           >
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center flex-wrap gap-2 mb-2.5">
+              {linked && <span style={{ color: tieColor(sec.colorIndex) }}>⌒</span>}
               <input
-                className="bg-transparent border-b border-neutral-700 focus:border-blue-600 outline-none text-base font-semibold text-neutral-100 px-1 py-0.5 flex-none w-[240px]"
+                className="bg-transparent border-b border-transparent hover:border-hairline focus:border-accent outline-none font-display text-lg text-ink px-1 py-0.5 flex-none w-[220px]"
                 value={sec.name}
                 onChange={(e) => onRenameSection(sec.id, e.target.value)}
+                onKeyDown={headerInputKeyDown}
               />
-              {src && (
-                <span className="text-xs text-neutral-500" title="Linked copy — edits here and at the source mirror each other">
-                  = {src.name}
-                </span>
-              )}
-              {src ? (
-                times > 1 && <span className="text-xs text-neutral-400">×{times}</span>
-              ) : (
-                <label
-                  className="flex items-center gap-1 text-xs text-neutral-400"
-                  title="Times this track's bars repeat — raising it extends the section for the other tracks"
-                >
-                  ×
-                  <input
-                    className="bg-neutral-950 border border-neutral-700 text-neutral-100 text-xs px-1.5 py-1 w-12"
-                    type="number"
-                    min={1}
-                    max={99}
-                    value={times}
-                    onChange={(e) => onRepeatChange(sec.id, Number(e.target.value))}
-                  />
-                </label>
-              )}
-              <button
-                className={headerBtn}
-                onClick={() => onInsertMeasureAfter(loop > 0 ? sec.startMeasure + loop - 1 : sec.endMeasure)}
-                title="Add measure to this section"
-              >
+              <button className={headerBtn} onClick={() => onCopySection(sec.id)} title="Copy section — paste it anywhere via ⎀ in the section bar">
+                copy
+              </button>
+              <button className={headerBtn} onClick={() => onInsertMeasureAfter(sec.endMeasure)} title="Add measure to this section">
                 + measure
               </button>
-              <button className={headerBtn} onClick={() => onAddSectionAfter(sec.endMeasure + 1)} title="Split a new section after this one">
-                + section after
-              </button>
-              <button className={headerBtn} onClick={() => onLinkSection(sec.id)} title="Append a linked copy at the end — edits mirror each other">
-                + link
-              </button>
-              {(canDeleteSection || src) && (
-                <button
-                  className={dangerHeaderBtn}
-                  onClick={() => onDeleteSection(sec.id)}
-                  title={src ? 'Remove this linked copy and its bars' : 'Remove section marker'}
-                >
-                  {src ? 'remove link' : 'remove marker'}
+              {span > 1 && (
+                <label className="flex items-center gap-1.5 text-[11px] text-ink-faint font-mono uppercase tracking-wide">
+                  𝄆 loop
+                  <select
+                    className="bg-transparent border-b border-hairline-strong text-ink-soft text-[11px] font-mono px-0.5 py-0.5 outline-none focus:border-accent"
+                    value={loopUnit ?? ''}
+                    onChange={(e) => onSetTrackLoop(sec.id, e.target.value === '' ? null : Number(e.target.value))}
+                  >
+                    <option value="">off</option>
+                    {Array.from({ length: span - 1 }, (_, i) => i + 1).map((u) => (
+                      <option key={u} value={u}>
+                        {u} bar{u === 1 ? '' : 's'} ×{Math.ceil(span / u)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {canDeleteSection && (
+                <button className={dangerHeaderBtn} onClick={() => onDeleteSection(sec.id)} title="Remove section marker (bars stay)">
+                  remove marker
                 </button>
               )}
             </div>
 
-            <input
-              className="bg-transparent border-b border-neutral-800 focus:border-blue-600 outline-none text-xs text-neutral-400 placeholder-neutral-600 px-1 py-1 w-full max-w-[520px] mb-3"
-              value={sec.comment ?? ''}
-              placeholder="Notes"
-              onChange={(e) => onCommentChange(sec.id, e.target.value)}
-            />
+            <div className="flex flex-wrap items-start gap-x-4 mb-2.5">
+              <textarea
+                rows={1}
+                className="field-sizing-content resize-none bg-transparent border-b border-hairline focus:border-accent outline-none text-xs text-ink-soft placeholder-ink-faint px-1 py-1 w-full max-w-[380px]"
+                value={sec.comment ?? ''}
+                placeholder="Notes"
+                onChange={(e) => onCommentChange(sec.id, e.target.value)}
+                onKeyDown={headerInputKeyDown}
+              />
+              <textarea
+                rows={1}
+                className="field-sizing-content resize-none bg-transparent border-b border-hairline focus:border-accent outline-none text-xs text-ink-soft placeholder-ink-faint px-1 py-1 w-full max-w-[380px]"
+                value={sec.trackComments?.[track.id] ?? ''}
+                placeholder={`Notes · ${track.name}`}
+                onChange={(e) => onTrackCommentChange(sec.id, e.target.value)}
+                onKeyDown={headerInputKeyDown}
+              />
+            </div>
 
             {chunkMeasures(measureIndices).map((lineMeasures) => (
-              <div className="mb-4" key={lineMeasures[0]}>
+              <div
+                className="mb-4 scroll-mt-[190px]"
+                key={lineMeasures[0]}
+                data-line-start={lineMeasures[0]}
+                data-line-end={lineMeasures[lineMeasures.length - 1]}
+              >
                 <div className="flex items-center">
+                  <span className="w-10 shrink-0" />
+                  {lineMeasures.map((m) => {
+                    const off = m - sec.startMeasure
+                    const mirrored = loopUnit != null && off >= loopUnit
+                    const unitStart = loopUnit != null && off === 0
+                    const unitEnd = loopUnit != null && off === Math.min(loopUnit, span) - 1
+                    return (
+                      <div className="flex items-center shrink-0" key={m}>
+                        <span className="w-3.5 shrink-0 text-center text-ink-faint">{unitStart ? '𝄆' : ''}</span>
+                        <span
+                          className={
+                            'flex items-center gap-1 shrink-0 text-xs font-mono ' + (mirrored ? 'text-ink-faint/70' : 'text-ink-faint')
+                          }
+                          style={{ width: CELL_W * COLS_PER_MEASURE }}
+                        >
+                          #{m + 1}
+                          {measureCount > 1 && (
+                            <button
+                              className="bg-transparent hover:text-accent text-ink-faint px-1.5 leading-none"
+                              onClick={() => onDeleteMeasure(m)}
+                              title="Delete measure"
+                            >
+                              <CloseIcon />
+                            </button>
+                          )}
+                        </span>
+                        <span className="w-3.5 shrink-0 text-center text-ink-faint">{unitEnd && !unitStart ? '𝄇' : ''}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="flex items-center mb-1">
                   <span className="w-10 shrink-0" />
                   {lineMeasures.map((m) => (
                     <div className="flex items-center shrink-0" key={m}>
                       <span className="w-3.5 shrink-0" />
-                      <span className="flex items-center gap-1 w-[208px] shrink-0 text-xs text-neutral-500">
-                        #{m + 1}
-                        {measureCount > 1 && (
-                          <button
-                            className="bg-transparent hover:bg-rose-900 hover:text-rose-300 text-neutral-500 px-1.5 leading-none"
-                            onClick={() => onDeleteMeasure(m)}
-                            title="Delete measure"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </span>
+                      <input
+                        className="bg-transparent border-b border-hairline focus:border-accent outline-none text-[11px] text-ink-soft placeholder-ink-faint/70 px-0.5"
+                        style={{ width: CELL_W * COLS_PER_MEASURE }}
+                        value={measureNotes[m] ?? ''}
+                        placeholder="note"
+                        onChange={(e) => onSetMeasureNote(m, e.target.value)}
+                        onKeyDown={headerInputKeyDown}
+                      />
+                      <span className="w-3.5 shrink-0" />
                     </div>
                   ))}
                 </div>
 
-                <div className="font-mono">
-                  {activeTrack.tuning.map((str, s) => (
+                <div className="relative">
+                  {playheadLeft(lineMeasures) !== null && (
+                    <div
+                      className="absolute top-0 bottom-0 border-l-2 border-accent bg-accent/10 transition-[left] duration-150 ease-out pointer-events-none z-10"
+                      style={{ left: playheadLeft(lineMeasures) as number, width: CELL_W }}
+                    />
+                  )}
+                  {track.tuning.map((str, s) => (
                     <div className="flex items-center" key={s}>
-                      <span className="w-10 shrink-0 text-right mr-1.5 text-neutral-400 text-[13px]">
-                        {midiToNoteName(stringMidi(str))}
-                      </span>
-                      <span className="w-3.5 shrink-0 text-center text-neutral-600">|</span>
+                      <span className="w-10 shrink-0 text-right mr-1.5 text-ink-soft text-[13px] font-mono">{midiToNoteName(stringMidi(str))}</span>
+                      <span className="w-3.5 shrink-0 text-center text-hairline-strong">|</span>
                       {lineMeasures.map((m) => (
                         <span className="flex items-center shrink-0" key={m}>
-                          {activeTrack.measures[m].map((col, c) => {
-                            const isSelected = selected && selected.m === m && selected.c === c && selected.s === s
-                            const isPlayhead = playheadMeasure === m && playhead?.c === c
+                          {track.measures[m].map((col, c) => {
                             const value = col[s]
+                            const label = value === null || value === '' ? '-' : value
                             return (
                               <button
                                 key={c}
                                 data-cell
-                                className={
-                                  'w-[26px] h-[26px] shrink-0 border-0 border-b border-neutral-800 text-[13px] p-0 m-0 ' +
-                                  (isSelected
-                                    ? 'outline outline-2 -outline-offset-2 outline-blue-600 bg-blue-950'
-                                    : isPlayhead
-                                      ? 'bg-emerald-950'
-                                      : 'bg-transparent hover:bg-neutral-800') +
-                                  ' ' +
-                                  (value !== null ? 'text-neutral-100 font-semibold' : 'text-neutral-600')
-                                }
-                                onClick={() => onSelectCell(m, c, s)}
+                                style={{ width: CELL_W }}
+                                className={cellClass(m, c, s, value !== null && value !== '')}
+                                onMouseDown={(e) => {
+                                  e.preventDefault()
+                                  onCellMouseDown(m, c, s, e.shiftKey)
+                                }}
+                                onMouseEnter={() => onCellEnter(m, c, s)}
                               >
-                                {value === null ? '-' : value}
+                                {label}
                               </button>
                             )
                           })}
-                          <span className="w-3.5 shrink-0 text-center text-neutral-600">|</span>
+                          <span className="w-3.5 shrink-0 text-center text-hairline-strong">|</span>
                         </span>
                       ))}
                     </div>

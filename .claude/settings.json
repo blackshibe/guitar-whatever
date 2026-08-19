@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "atlas@atlas-ui": true,
+    "impeccable@impeccable": true
+  }
+}

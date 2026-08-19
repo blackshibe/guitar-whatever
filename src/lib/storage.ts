@@ -1,7 +1,17 @@
-import type { Measure, Section, Song } from '../types'
+import type { Measure, Section, Song, Track } from '../types'
+import { makeMeasure } from './instruments'
+import { sectionRangesFor } from './songOps'
 
 const LIBRARY_KEY = 'tab-editor:songs'
 const LAST_OPENED_KEY = 'tab-editor:last-opened'
+
+// Section.linkTo and Track.loops are live, reducer-driven features now.
+// Only the old global per-section `repeat` has no live equivalent; migrateSong
+// rewrites it into written-out bars (plus an equivalent per-track loop) once, on load.
+interface LegacySection extends Section {
+  /** global per-section repeat, replayed for every track */
+  repeat?: number
+}
 
 function readLibrary(): Record<string, Song> {
   try {
@@ -36,15 +46,18 @@ export function listSongs(): Song[] {
   return Object.values(readLibrary()).sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-// Legacy songs stored a global per-section `repeat` that replayed the same
-// measures for every track. Rewrite that as written-out measures (content
-// duplicated) with every track looping the original span — sounds identical,
-// but tracks can now diverge by turning their loop off and editing the copies.
-export function migrateSong(song: Song): Song {
-  if (!song.sections.some((s) => (s.repeat ?? 1) > 1)) return song
-  const sorted = [...song.sections].sort((a, b) => a.startMeasure - b.startMeasure)
-  const tracks = song.tracks.map((t) => ({ ...t, loops: { ...(t.loops ?? {}) }, measures: t.measures.slice() }))
-  const sections: Section[] = []
+// Legacy global `repeat` becomes written-out measures plus an equivalent
+// per-track loop (same live field the reducer maintains going forward).
+function migrateLegacyRepeat(song: Song): Song {
+  const legacySections = song.sections as LegacySection[]
+  if (!legacySections.some((s) => (s.repeat ?? 1) > 1)) return song
+  const sorted = [...legacySections].sort((a, b) => a.startMeasure - b.startMeasure)
+  const tracks = song.tracks.map((t) => ({
+    ...t,
+    loops: { ...(t.loops ?? {}) },
+    measures: t.measures.slice(),
+  }))
+  const sections: LegacySection[] = []
   let measureCount = song.measureCount
   let offset = 0
   sorted.forEach((sec, i) => {
@@ -67,6 +80,44 @@ export function migrateSong(song: Song): Song {
     }
   })
   return { ...song, sections, tracks, measureCount }
+}
+
+// linkTo and loops are live fields the reducer keeps in sync as the user
+// edits — this just self-heals on load in case saved data ever drifted, and
+// keeps both fields (nothing is stripped).
+function resyncLiveFeatures(song: Song): Song {
+  const ranges = sectionRangesFor(song.sections, song.measureCount)
+  const tracks: Track[] = song.tracks.map((t) => {
+    const measures = t.measures.map((measure) => measure.map((col) => col.slice()))
+    ranges.forEach((r) => {
+      const span = r.endMeasure - r.startMeasure + 1
+      const unit = t.loops?.[r.id] ?? 0
+      if (unit < 1 || unit >= span) return
+      for (let off = unit; off < span; off++) {
+        const from = measures[r.startMeasure + (off % unit)]
+        measures[r.startMeasure + off] = from ? from.map((col) => col.slice()) : makeMeasure(t.tuning.length)
+      }
+    })
+    return { ...t, measures }
+  })
+  ranges.forEach((r) => {
+    if (r.linkTo == null) return
+    const src = ranges.find((x) => x.id === r.linkTo)
+    if (!src) return
+    const span = r.endMeasure - r.startMeasure + 1
+    if (span !== src.endMeasure - src.startMeasure + 1) return
+    tracks.forEach((t) => {
+      for (let off = 0; off < span; off++) {
+        const from = t.measures[src.startMeasure + off]
+        t.measures[r.startMeasure + off] = from ? from.map((col) => col.slice()) : makeMeasure(t.tuning.length)
+      }
+    })
+  })
+  return { ...song, tracks }
+}
+
+export function migrateSong(song: Song): Song {
+  return resyncLiveFeatures(migrateLegacyRepeat(song))
 }
 
 export function loadSong(id: string): Song | null {

@@ -1,11 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 
+@theme {
+  /* The plate itself, not the printed paper: a blackened engraving plate
+     under a raking work light — near-black warm metal, lines etched in
+     light ink, one crimson transport accent. */
+  --color-plate: #171511;
+  --color-plate-raised: #201d18;
+  --color-plate-sunken: #2a2620;
+  --color-ink: #ece6d8;
+  --color-ink-soft: #9aa7b0;
+  --color-ink-faint: #9c9382;
+  --color-accent: #d65a48;
+  --color-accent-ink: #171511;
+  --color-hairline: #3a352c;
+  --color-hairline-strong: #4c4638;
+
+  --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-ui: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
   body {
     margin: 0;
-    background: #0a0a0a;
-    color: #f5f5f5;
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--color-plate);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    text-underline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  * {
+    caret-color: var(--color-accent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-plate);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-hairline-strong);
+    border: 3px solid var(--color-plate);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-faint);
+  }
+
+  * {
+    scrollbar-color: var(--color-hairline-strong) var(--color-plate);
   }
 }
 

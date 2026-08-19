@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "files": [
+          "src/index.css"
+        ],
+        "createdAt": "2026-08-19T15:14:30.451Z",
+        "reason": "coordinator: Inter used only as workhorse UI/body face (buttons, labels, toolbar) — Bodoni Moda carries the display/identity voice; new-work.md sanctions workhorse UI faces for Operate-mode surfaces"
+      }
+    ]
+  }
+}

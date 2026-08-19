@@ -1,23 +1,24 @@
 import { useRef } from 'react'
 import type { Song } from '../types'
+import { CloseIcon } from './Icons'
 
 interface Props {
   songs: Song[]
   currentSongId: string
+  isAutosaved: boolean
   onLoad: (id: string) => void
   onDelete: (id: string) => void
   onNew: () => void
   onSave: () => void
   onExport: () => void
   onImport: (file: File) => void
-  saveStatus: string
 }
 
-const btn = 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs px-2.5 py-1'
-const danger = 'bg-neutral-800 hover:bg-rose-900 hover:text-rose-300 text-neutral-200 text-xs px-2.5 py-1'
-const saveBtn = 'bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-1'
+const btn = 'text-ink-soft hover:text-ink text-xs px-2 py-1.5 border-b border-transparent hover:border-hairline-strong'
+const danger = 'text-ink-soft hover:text-accent text-xs px-2 py-1'
+const saveBtn = 'bg-accent text-accent-ink text-xs font-medium px-2.5 py-1.5 hover:opacity-90'
 
-export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, onNew, onSave, onExport, onImport, saveStatus }: Props) {
+export default function SongSidebar({ songs, currentSongId, isAutosaved, onLoad, onDelete, onNew, onSave, onExport, onImport }: Props) {
   const isSaved = songs.some((s) => s.id === currentSongId)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -28,26 +29,31 @@ export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, on
   }
 
   return (
-    <aside className="w-64 shrink-0 border-r border-neutral-800 h-screen sticky top-0 overflow-y-auto p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-neutral-100 uppercase tracking-wide">Songs</h2>
+    <aside className="w-full md:w-64 shrink-0 border-b md:border-b-0 md:border-r border-hairline-strong md:h-screen md:sticky md:top-0 overflow-y-auto p-5 bg-plate-raised">
+      <div className="flex items-center justify-between mb-3.5">
+        <h2 className="font-display font-semibold text-lg text-ink">Songs</h2>
         <button className={btn} onClick={onNew}>
           + New
         </button>
       </div>
 
       <div className="flex items-center gap-2 mb-4">
-        <button className={`${saveBtn} flex-1`} onClick={onSave}>
-          {isSaved ? 'Overwrite' : 'Save'}
-        </button>
-        {saveStatus && <span className="text-xs text-emerald-400">{saveStatus}</span>}
+        {isSaved ? (
+          <span className="text-xs text-ink-faint flex-1" title="Changes save automatically">
+            {isAutosaved ? 'Autosaved' : 'Saving…'}
+          </span>
+        ) : (
+          <button className={`${saveBtn} flex-1`} onClick={onSave}>
+            Save
+          </button>
+        )}
       </div>
 
-      <div className="flex items-center gap-2 mb-4">
-        <button className={`${btn} flex-1`} onClick={onExport} title="Download all saved songs as JSON">
+      <div className="flex items-center gap-3 mb-4 border-b border-hairline pb-3.5">
+        <button className={btn} onClick={onExport} title="Download all saved songs as JSON">
           Export
         </button>
-        <button className={`${btn} flex-1`} onClick={() => fileInputRef.current?.click()} title="Merge songs from a JSON export">
+        <button className={btn} onClick={() => fileInputRef.current?.click()} title="Merge songs from a JSON export">
           Import
         </button>
         <input
@@ -64,20 +70,20 @@ export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, on
       </div>
 
       {songs.length === 0 ? (
-        <p className="text-xs text-neutral-500">Nothing saved yet — hit Save to store the current song here.</p>
+        <p className="text-xs text-ink-faint">Nothing saved yet — hit Save to store the current song here.</p>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col">
           {songs.map((song) => (
             <div
               key={song.id}
               className={
-                'border px-2.5 py-2 cursor-pointer ' +
-                (song.id === currentSongId ? 'border-blue-600 bg-blue-950/30' : 'border-neutral-800 hover:border-neutral-700')
+                'border-b border-hairline px-1 py-2.5 cursor-pointer ' +
+                (song.id === currentSongId ? 'bg-plate border-l-2 border-l-accent pl-2' : 'hover:bg-plate/60')
               }
               onClick={() => onLoad(song.id)}
             >
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 text-sm text-neutral-100 truncate">{song.title || 'Untitled Song'}</div>
+                <div className="min-w-0 text-sm text-ink truncate font-medium">{song.title || 'Untitled Song'}</div>
                 <button
                   className={`${danger} shrink-0`}
                   onClick={(e) => {
@@ -85,13 +91,13 @@ export default function SongSidebar({ songs, currentSongId, onLoad, onDelete, on
                     handleDelete(song)
                   }}
                 >
-                  ×
+                  <CloseIcon />
                 </button>
               </div>
-              <div className="text-[11px] text-neutral-500 mt-0.5">
+              <div className="text-[11px] text-ink-faint mt-0.5 font-mono">
                 {song.tracks.length} track{song.tracks.length === 1 ? '' : 's'} · {song.measureCount} measures
               </div>
-              <div className="text-[11px] text-neutral-600">{new Date(song.updatedAt).toLocaleString()}</div>
+              <div className="text-[11px] text-ink-faint/70">{new Date(song.updatedAt).toLocaleString()}</div>
             </div>
           ))}
         </div>

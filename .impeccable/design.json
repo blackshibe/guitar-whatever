@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-19T00:00:00.000Z",
+  "title": "Design System: Guitar Tab Editor",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Crimson Transport",
+        "canonical": "#d65a48",
+        "tonalRamp": ["#3a1a14", "#5c281f", "#7e362a", "#a04435", "#c25240", "#d65a48", "#e08a7a", "#efc0b5"]
+      },
+      "plate": {
+        "role": "neutral",
+        "displayName": "Plate (ground)",
+        "canonical": "#171511",
+        "tonalRamp": ["#0c0b09", "#171511", "#201d18", "#2a2620", "#3a352c", "#4c4638", "#6e6656", "#9c9382"]
+      },
+      "plate-raised": {
+        "role": "neutral",
+        "displayName": "Plate Raised",
+        "canonical": "#201d18",
+        "tonalRamp": ["#0c0b09", "#171511", "#201d18", "#2a2620", "#3a352c", "#4c4638", "#6e6656", "#9c9382"]
+      },
+      "plate-sunken": {
+        "role": "neutral",
+        "displayName": "Plate Sunken",
+        "canonical": "#2a2620",
+        "tonalRamp": ["#0c0b09", "#171511", "#201d18", "#2a2620", "#3a352c", "#4c4638", "#6e6656", "#9c9382"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink (primary text)",
+        "canonical": "#ece6d8",
+        "tonalRamp": ["#171511", "#3a352c", "#5c5648", "#7e7768", "#9c9382", "#bdb6a4", "#d8d2c2", "#ece6d8"]
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Ink Soft (slate)",
+        "canonical": "#9aa7b0",
+        "tonalRamp": ["#232a2d", "#3a444a", "#516067", "#697b83", "#82929a", "#9aa7b0", "#b8c1c8", "#d8dee1"]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "Ink Faint",
+        "canonical": "#9c9382",
+        "tonalRamp": ["#2a251f", "#453e33", "#5f5747", "#7a705c", "#9c9382", "#b6ada0", "#cdc6bb", "#e5e1d8"]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#3a352c",
+        "tonalRamp": ["#171511", "#221f1a", "#2a2620", "#3a352c", "#4c4638", "#635c4c", "#7d7462", "#9c9382"]
+      },
+      "hairline-strong": {
+        "role": "neutral",
+        "displayName": "Hairline Strong",
+        "canonical": "#4c4638",
+        "tonalRamp": ["#171511", "#2a2620", "#3a352c", "#4c4638", "#635c4c", "#7d7462", "#9c9382", "#bdb6a4"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display (Bodoni Moda)", "purpose": "Song title, section names, dialog headings — the identity face; self-hosted." },
+      "body": { "displayName": "Body (Inter)", "purpose": "All interactive UI text: buttons, nav, labels, comments." },
+      "label": { "displayName": "Label (Inter, uppercase)", "purpose": "Tuning readout, song metadata, measure-line labels." },
+      "mono": { "displayName": "Grid (JetBrains Mono)", "purpose": "Every tab-grid cell value, note names, BPM — anything that is data, not prose." }
+    },
+    "shadows": [
+      { "name": "modal", "value": "0 10px 28px rgba(28,27,25,0.28)", "purpose": "Centered dialogs (Tuning Editor) over a black/70 scrim." },
+      { "name": "popover", "value": "0 6px 16px rgba(28,27,25,0.18)", "purpose": "Section-link menu, shortcut-help panel." },
+      { "name": "floating-collapsed", "value": "0 6px 16px rgba(0,0,0,0.4)", "purpose": "Reference-video widget collapsed state, toast." },
+      { "name": "floating-expanded", "value": "0 10px 24px rgba(0,0,0,0.45)", "purpose": "Reference-video widget expanded state." }
+    ],
+    "motion": [
+      { "name": "playhead-glide", "value": "left 150ms ease-out", "purpose": "The playhead overlay translates across the active line instead of jump-cutting cell to cell." },
+      { "name": "state-transition", "value": "color/background-color/border-color 150-200ms ease", "purpose": "Default hover/focus transition for ghost buttons, cell focus, tab underlines." },
+      { "name": "seek-fill", "value": "width 100ms linear", "purpose": "Transport scrub-rule progress fill." }
+    ],
+    "breakpoints": [
+      { "name": "md", "value": "768px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button (Play)",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The transport's default play action — the only routinely-visible solid-crimson button in the system.",
+      "html": "<button class=\"ds-btn-primary\"><svg class=\"ds-icon\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 2.5 L13 8 L4 13.5 Z\"/></svg> Play</button>",
+      "css": ".ds-btn-primary { background: #d65a48; color: #171511; font-family: Inter, ui-sans-serif, sans-serif; font-size: 13px; font-weight: 500; padding: 8px 24px; border: none; border-radius: 0; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: opacity 0.15s; } .ds-btn-primary .ds-icon { width: 1em; height: 1em; } .ds-btn-primary:hover { opacity: 0.9; } .ds-btn-primary:focus-visible { outline: 2px solid #d65a48; outline-offset: 1px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "The default UI button everywhere outside the transport: toolbar, section nav, track tabs, sidebar actions.",
+      "html": "<button class=\"ds-btn-ghost\">+ Measure</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #9aa7b0; font-family: Inter, ui-sans-serif, sans-serif; font-size: 13px; padding: 10px 12px; border: none; border-bottom: 1px solid transparent; border-radius: 0; cursor: pointer; transition: color 0.15s, border-color 0.15s; } .ds-btn-ghost:hover { color: #ece6d8; border-bottom-color: #4c4638; } .ds-btn-ghost:focus-visible { outline: 2px solid #d65a48; outline-offset: 1px; }"
+    },
+    {
+      "name": "Danger Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Clear / remove-track / remove-section / delete-song — same ghost shape, hovers to crimson instead of ink.",
+      "html": "<button class=\"ds-btn-danger\">Clear</button>",
+      "css": ".ds-btn-danger { background: transparent; color: #9aa7b0; font-family: Inter, ui-sans-serif, sans-serif; font-size: 13px; padding: 10px 12px; border: none; border-bottom: 1px solid transparent; border-radius: 0; cursor: pointer; transition: color 0.15s, border-color 0.15s; } .ds-btn-danger:hover { color: #d65a48; border-bottom-color: rgba(214,90,72,0.4); } .ds-btn-danger:focus-visible { outline: 2px solid #d65a48; outline-offset: 1px; }"
+    },
+    {
+      "name": "Underline Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "The system's only text-input style: no box, a hairline underline that turns crimson on focus. Used for song title, section names, comments, BPM, lyrics.",
+      "html": "<input class=\"ds-field\" placeholder=\"Untitled Song\" value=\"\" />",
+      "css": ".ds-field { background: transparent; color: #ece6d8; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 13px; padding: 4px 6px; border: none; border-bottom: 1px solid #3a352c; border-radius: 0; outline: none; transition: border-color 0.15s; } .ds-field::placeholder { color: #9c9382; } .ds-field:hover { border-bottom-color: #4c4638; } .ds-field:focus { border-bottom-color: #d65a48; }"
+    },
+    {
+      "name": "Track Tab (Navigation)",
+      "kind": "nav",
+      "description": "Instrument switcher: one system on screen at a time. Active tab gets a crimson underline and a raised-plate wash.",
+      "html": "<div class=\"ds-tab ds-tab-active\">Guitar</div><div class=\"ds-tab\">Vocals</div>",
+      "css": ".ds-tab { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px 6px 10px; border-bottom: 2px solid transparent; color: #9aa7b0; font-family: Inter, sans-serif; font-size: 13px; cursor: pointer; } .ds-tab:hover { background: rgba(32,29,24,0.6); } .ds-tab-active { border-bottom-color: #d65a48; background: #201d18; color: #ece6d8; font-weight: 500; }"
+    },
+    {
+      "name": "Card / Panel",
+      "kind": "card",
+      "description": "The system's only container style: flat plate background, single hairline border, square corners, no shadow at rest.",
+      "html": "<div class=\"ds-panel\">Panel content</div>",
+      "css": ".ds-panel { background: #171511; border: 1px solid #4c4638; border-radius: 0; padding: 20px; color: #ece6d8; }"
+    },
+    {
+      "name": "Toast",
+      "kind": "custom",
+      "description": "Bottom-centered ephemeral confirmation, the one place a floating shadow appears outside modals/popovers.",
+      "html": "<div class=\"ds-toast\">Saved</div>",
+      "css": ".ds-toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #ece6d8; color: #171511; font-family: Inter, sans-serif; font-size: 13px; font-weight: 500; padding: 10px 16px; border-radius: 0; box-shadow: 0 6px 16px rgba(0,0,0,0.4); }"
+    },
+    {
+      "name": "Transport Bar (signature)",
+      "kind": "custom",
+      "description": "Fixed bottom playback bar, Songsterr idiom: click-to-seek crimson scrub rule above centered transport controls and a BPM field.",
+      "html": "<div class=\"ds-transport\"><div class=\"ds-scrub\"><div class=\"ds-scrub-fill\" style=\"width:35%\"></div></div><div class=\"ds-transport-row\"><button class=\"ds-btn-primary\">Play</button><label class=\"ds-bpm\">BPM <input class=\"ds-field\" style=\"width:48px;text-align:center\" value=\"100\" /></label></div></div>",
+      "css": ".ds-transport { position: fixed; bottom: 0; left: 0; right: 0; background: #201d18; border-top: 1px solid #4c4638; } .ds-scrub { height: 6px; background: #171511; cursor: pointer; } .ds-scrub-fill { height: 100%; background: #d65a48; transition: width 0.1s linear; } .ds-transport-row { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px 20px; max-width: 1100px; margin: 0 auto; position: relative; } .ds-bpm { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #9aa7b0; position: absolute; right: 20px; }"
+    },
+    {
+      "name": "Playhead Overlay (signature)",
+      "kind": "custom",
+      "description": "A single translating overlay per visible score line — a crimson left border with tinted fill — that glides (150ms ease-out) across cells during playback instead of jump-cutting per-cell borders.",
+      "html": "<div class=\"ds-line\"><div class=\"ds-playhead\" style=\"left:56px;width:28px\"></div></div>",
+      "css": ".ds-line { position: relative; } .ds-playhead { position: absolute; top: 0; bottom: 0; border-left: 2px solid #d65a48; background: rgba(214,90,72,0.1); transition: left 0.15s ease-out; pointer-events: none; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Engraver's Plate",
+    "overview": "The song is not a spreadsheet of cells with a toolbar floating above it; it is a blackened engraving plate under a raking work light, and the tab is the score etched into it. The metal ground is near-black and warm, the staff lines are hairline scores in the plate, and note values sit in the grid like struck type. One color is allowed to move under it — crimson — reserved for the transport and for the state that is actively happening: the focused cell, the playhead, the primary action. Everything else on the plate is ink, in three weights of legibility (full, soft/slate for secondary state, faint for tertiary), never a second hue competing for attention. This world shipped dark-only by explicit direction mid-build — it began as a light ivory-paper rendition and was deliberately flipped and committed as the sole mode, not a theme variant sitting alongside a light default. There is no light-mode fallback to design around; color-scheme: dark is asserted at the HTML root. Corners are square everywhere (border-radius: 0 !important is a project-wide reset), consistent with engraving in metal: nothing here is molded or soft-edged.",
+    "keyCharacteristics": [
+      "Near-black warm metal ground, light-etched ink text, one crimson accent used sparingly for transport and active-state",
+      "Bodoni Moda (display/identity) + Inter (UI text) + JetBrains Mono (the grid itself and all numeric/note data)",
+      "Square corners everywhere, hairline dividers instead of cards or shadows for structure",
+      "A single floating corner widget (reference video) and a single fixed bottom transport bar are the only two elements that leave the document flow",
+      "Authored stroke-SVG icons for UI chrome; genuine music notation (repeat marks, tie mark) is drawn in literal Unicode glyphs as earned notation, not decoration"
+    ],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Crimson appears only on the actively playing/selected/focused element or a destructive action's hover state — never as a static brand color splashed on chrome. If nothing is active, nothing on screen is crimson except the transport play button.", "section": "colors" },
+      { "name": "The Three-Ink Rule", "body": "Text uses exactly three weights of the same ink hue family (full ink, soft slate, faint) to express hierarchy — never a fourth neutral, never a tint of the accent for text color.", "section": "colors" },
+      { "name": "The Grid-Is-Mono Rule", "body": "Anything living inside the editable tab grid (fret numbers, note names, BPM) is JetBrains Mono; nothing outside the grid is set in the mono face for body text. Monospace signals \"this is data you edit,\" never decoration.", "section": "typography" },
+      { "name": "The Flat Plate Rule", "body": "Surfaces at rest are flat; a shadow appears only when an element has actually left the document flow (modal, popover, floating widget, toast) to signal \"this is above the plate,\" never as ambient polish on ordinary panels or cards.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep crimson to the actively-playing/focused/selected element and destructive hover states only — see The One Accent Rule.",
+      "Do use JetBrains Mono for anything inside the editable grid (fret numbers, note names, BPM) and reserve it for that role.",
+      "Do use square corners everywhere; the global border-radius: 0 !important reset is a committed identity trait of this world, not a temporary default.",
+      "Do express depth with hairline borders and plate/plate-raised/plate-sunken tonal steps before reaching for a shadow; reserve shadows for elements that have actually left document flow (modal, popover, floating widget, toast).",
+      "Do keep the utility bar (add-measure/section, instrument tabs, section jump) pinned/sticky above the scrolling score — this was a direct build-time fix for controls that \"don't move with the page,\" not optional chrome.",
+      "Do author new UI iconography as consistent-stroke SVGs matching Icons.tsx's 1.6px stroke convention; do not reach for bare Unicode glyphs for generic chrome."
+    ],
+    "donts": [
+      "Don't introduce a second saturated accent color; the system's entire expressive color budget is one crimson against warm neutrals.",
+      "Don't round any corner; there is no exception in the shipped system, including modals and floating widgets.",
+      "Don't add drop shadows to elements that stay in normal document flow (cards, panels, buttons at rest) — shadow is reserved for genuinely floating/overlay elements per The Flat Plate Rule.",
+      "Don't stack more than one instrument track's grid on screen at once; the one-system-at-a-time rule (switched by track tab) is a structural invariant of the score metaphor, not a space-saving default that can be relaxed."
+    ]
+  }
+}

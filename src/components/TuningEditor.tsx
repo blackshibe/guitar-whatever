@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { PRESET_TUNINGS, NOTE_NAMES, presetLabel, presetToTuning } from '../lib/tunings'
 import type { StringTuning } from '../types'
+import { CloseIcon } from './Icons'
 
 interface Props {
   tuning: StringTuning[]
@@ -8,11 +10,19 @@ interface Props {
   onClose: () => void
 }
 
-const btn = 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-sm px-2 py-1 disabled:opacity-30 disabled:hover:bg-neutral-800'
-const danger = 'bg-neutral-800 hover:bg-rose-900 hover:text-rose-300 text-neutral-200 text-sm px-2 py-1 disabled:opacity-30 disabled:hover:bg-neutral-800 disabled:hover:text-neutral-200'
-const field = 'bg-neutral-950 border border-neutral-700 text-neutral-100 text-sm px-2 py-1'
+const btn = 'text-ink-soft hover:text-ink text-sm px-2 py-1 border-b border-transparent hover:border-hairline-strong disabled:opacity-30'
+const danger = 'text-ink-soft hover:text-accent text-sm px-2 py-1 border-b border-transparent hover:border-accent/40 disabled:opacity-30'
+const field = 'bg-transparent border-b border-hairline-strong focus:border-accent outline-none text-ink text-sm font-mono px-1.5 py-1'
 
 export default function TuningEditor({ tuning, trackName, onChange, onClose }: Props) {
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const updateString = (i: number, field: keyof StringTuning, value: number) => {
     onChange(tuning.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)))
   }
@@ -45,19 +55,19 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-5" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-5" onClick={onClose}>
       <div
-        className="bg-neutral-900 border border-neutral-800 p-6 w-full max-w-md max-h-[85vh] overflow-y-auto"
+        className="bg-plate border border-ink-faint p-6 w-full max-w-md max-h-[85vh] overflow-y-auto shadow-[0_10px_28px_rgba(28,27,25,0.28)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-base font-semibold text-neutral-100">Tuning — {trackName}</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display text-xl text-ink">Tuning — {trackName}</h3>
           <button className={danger} onClick={onClose}>
             Close
           </button>
         </div>
 
-        <label className="flex flex-col gap-1 text-xs text-neutral-400 mb-4">
+        <label className="flex flex-col gap-1 text-xs text-ink-faint mb-4">
           Start from preset
           <select className={field} defaultValue="" onChange={(e) => applyPreset(e.target.value)}>
             <option value="">— custom —</option>
@@ -72,7 +82,7 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
         <div className="flex flex-col gap-1.5">
           {tuning.map((s, i) => (
             <div className="flex items-center gap-1.5" key={i}>
-              <span className="w-10 text-xs uppercase text-neutral-500">
+              <span className="w-10 text-xs uppercase text-ink-faint font-mono">
                 {i === 0 ? 'top' : i === tuning.length - 1 ? 'bottom' : i + 1}
               </span>
               <select className={field} value={s.noteIndex} onChange={(e) => updateString(i, 'noteIndex', Number(e.target.value))}>
@@ -100,7 +110,7 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
                 +
               </button>
               <button className={danger} title="Remove string" onClick={() => removeString(i)} disabled={tuning.length <= 1}>
-                ×
+                <CloseIcon />
               </button>
             </div>
           ))}
