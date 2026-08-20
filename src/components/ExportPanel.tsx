@@ -24,7 +24,7 @@ export default function ExportPanel({ text }: Props) {
         <button className="bg-transparent text-sm font-medium text-ink-soft hover:text-ink px-0" onClick={() => setOpen((v) => !v)}>
           {open ? '▾' : '▸'} Export
         </button>
-        <button className="text-ink-soft hover:text-ink text-xs border-b border-hairline-strong hover:border-accent px-0.5" onClick={copy}>
+        <button className="btn text-xs px-2 py-1" onClick={copy}>
           Copy as text
         </button>
         {status && <span className="text-xs text-accent">{status}</span>}

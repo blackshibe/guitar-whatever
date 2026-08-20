@@ -16,7 +16,7 @@ interface Props {
   onAddSection: () => void
 }
 
-const addBtn = 'text-ink-soft text-[13px] px-3 py-2.5 hover:text-ink transition-colors'
+const addBtn = 'btn text-[13px] px-2.5 py-1.5'
 
 // Fixed to the bottom of the viewport, Songsterr-style: a scrub rule the
 // full width of the bar, every editing/playback action within one thumb's
@@ -43,13 +43,13 @@ export default function TransportBar({
 
   return (
     <div data-keep-selection className="fixed bottom-0 left-0 right-0 z-30 bg-plate-raised border-t border-hairline-strong">
-      <div className="h-2 bg-plate cursor-pointer group" onClick={handleSeek} title="Seek">
+      <div className="h-1.5 bg-plate cursor-pointer group" onClick={handleSeek} title="Seek">
         <div
           className="h-full bg-accent transition-[width] duration-100 ease-linear group-hover:brightness-110"
           style={{ width: `${(progress ?? 0) * 100}%` }}
         />
       </div>
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center max-w-[1100px] mx-auto px-5 py-2.5">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center max-w-[1100px] mx-auto px-5 py-1.5">
         <div className="flex items-center gap-0.5">
           <button className={addBtn} onClick={onAddMeasure}>
             + Measure
@@ -59,9 +59,9 @@ export default function TransportBar({
           </button>
         </div>
 
-        <div className="flex items-center gap-3 justify-self-center">
+        <div className="flex items-center gap-2 justify-self-center">
           <button
-            className="text-ink-soft hover:text-ink px-2 py-2.5 disabled:opacity-30"
+            className="btn px-2 py-1.5"
             onClick={onPlayFromStart}
             title="Play from the start"
             disabled={isPlaying}
@@ -69,12 +69,12 @@ export default function TransportBar({
             <SkipStartIcon />
           </button>
           {isPlaying ? (
-            <button className="bg-ink text-plate text-sm font-medium px-6 py-2.5 hover:bg-ink-soft transition-colors" onClick={onStop}>
+            <button className="bg-ink text-plate text-[13px] font-medium px-5 py-1.5 hover:bg-ink-soft transition-colors" onClick={onStop}>
               <StopIcon className="mr-1.5" /> Stop
             </button>
           ) : (
             <button
-              className="bg-accent text-accent-ink text-sm font-medium px-6 py-2.5 hover:opacity-90 transition-opacity"
+              className="bg-accent text-accent-ink text-[13px] font-medium px-5 py-1.5 hover:opacity-90 transition-opacity"
               onClick={onPlay}
               title={hasSelection ? 'Play from the selected cell' : 'Play from the start'}
             >

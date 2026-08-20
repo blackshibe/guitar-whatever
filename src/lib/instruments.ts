@@ -1,5 +1,5 @@
 import type { Column, Measure, StringTuning, Track } from '../types'
-import { NOTE_NAMES, noteOctaveToMidi, PRESET_TUNINGS, presetToTuning } from './tunings'
+import { NOTE_NAMES, noteOctaveToMidi, presetToTuning, tuningMidisFor } from './tunings'
 
 export const COLS_PER_MEASURE = 8
 export const MEASURES_PER_LINE = 4
@@ -24,8 +24,9 @@ export function makeMeasures(stringCount: number, count: number): Measure[] {
   return Array.from({ length: count }, () => makeMeasure(stringCount))
 }
 
+// E standard guitar — the default everywhere a track is created.
 export function defaultTuning(): StringTuning[] {
-  return presetToTuning(PRESET_TUNINGS['Guitar Standard'])
+  return presetToTuning(tuningMidisFor('Guitar', 'Standard', 4))
 }
 
 // tuning: array of { noteIndex, octave }, row 0 = top string as drawn.

@@ -1,5 +1,15 @@
-import { useEffect } from 'react'
-import { PRESET_TUNINGS, NOTE_NAMES, presetLabel, presetToTuning } from '../lib/tunings'
+import { useEffect, useState } from 'react'
+import {
+  NOTE_NAMES,
+  TUNING_TYPES,
+  midiToNoteOctave,
+  noteOctaveToMidi,
+  presetToTuning,
+  rootsFor,
+  tuningMidisFor,
+  type Instrument,
+  type TuningType,
+} from '../lib/tunings'
 import type { StringTuning } from '../types'
 import { CloseIcon } from './Icons'
 
@@ -10,11 +20,37 @@ interface Props {
   onClose: () => void
 }
 
-const btn = 'text-ink-soft hover:text-ink text-sm px-2 py-1 border-b border-transparent hover:border-hairline-strong disabled:opacity-30'
-const danger = 'text-ink-soft hover:text-accent text-sm px-2 py-1 border-b border-transparent hover:border-accent/40 disabled:opacity-30'
-const field = 'bg-transparent border-b border-hairline-strong focus:border-accent outline-none text-ink text-sm font-mono px-1.5 py-1'
+const btn = 'btn text-sm px-2 py-1'
+const danger = 'btn btn-danger text-sm px-2 py-1'
+const stepBtn = 'btn text-sm font-mono px-1.5 py-0.5'
+const sectionLabel = 'text-[11px] uppercase tracking-wide text-ink-faint'
+
+const MIN_MIDI = 12 // C0
+const MAX_MIDI = 108 // C8
+
+const midiOf = (s: StringTuning) => noteOctaveToMidi(s.noteIndex, s.octave)
+
+// The (instrument, type, root) combo whose generated tuning matches the
+// current strings exactly, if any — drives the highlighted chips.
+function detectTuning(midis: number[]): { instrument: Instrument; type: TuningType; root: number } | null {
+  for (const instrument of ['Guitar', 'Bass'] as const) {
+    for (const type of TUNING_TYPES[instrument]) {
+      for (const root of rootsFor(type)) {
+        const m = tuningMidisFor(instrument, type, root)
+        if (m.length === midis.length && m.every((v, i) => v === midis[i])) return { instrument, type, root }
+      }
+    }
+  }
+  return null
+}
 
 export default function TuningEditor({ tuning, trackName, onChange, onClose }: Props) {
+  const currentMidis = tuning.map(midiOf)
+  const match = detectTuning(currentMidis)
+  const [instrument, setInstrument] = useState<Instrument>(match?.instrument ?? 'Guitar')
+  const [type, setType] = useState<TuningType>(match?.type ?? 'Standard')
+  const activeRoot = match && match.instrument === instrument && match.type === type ? match.root : null
+
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -23,8 +59,18 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const updateString = (i: number, field: keyof StringTuning, value: number) => {
-    onChange(tuning.map((s, idx) => (idx === i ? { ...s, [field]: value } : s)))
+  const stepString = (i: number, delta: number) => {
+    const midi = midiOf(tuning[i]) + delta
+    if (midi < MIN_MIDI || midi > MAX_MIDI) return
+    onChange(tuning.map((s, idx) => (idx === i ? midiToNoteOctave(midi) : s)))
+  }
+
+  // Whole-tuning transpose (half-step-down in one click) — no-op instead of
+  // clamping so string intervals never get squashed at the range edge.
+  const stepAll = (delta: number) => {
+    const midis = tuning.map((s) => midiOf(s) + delta)
+    if (midis.some((m) => m < MIN_MIDI || m > MAX_MIDI)) return
+    onChange(midis.map(midiToNoteOctave))
   }
 
   const addString = (position: number) => {
@@ -49,10 +95,9 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
 
   const reverseOrder = () => onChange(tuning.slice().reverse())
 
-  const applyPreset = (name: string) => {
-    if (!name) return
-    onChange(presetToTuning(PRESET_TUNINGS[name]))
-  }
+  const chip = (active: boolean) =>
+    'text-[13px] px-2.5 py-1 border bg-plate-sunken transition-colors ' +
+    (active ? 'border-accent text-ink' : 'border-hairline-strong text-ink-soft hover:text-ink hover:border-ink-faint')
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-5" onClick={onClose}>
@@ -60,46 +105,78 @@ export default function TuningEditor({ tuning, trackName, onChange, onClose }: P
         className="bg-plate border border-ink-faint p-6 w-full max-w-md max-h-[85vh] overflow-y-auto shadow-[0_10px_28px_rgba(28,27,25,0.28)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-4">
           <h3 className="font-display text-xl text-ink">Tuning — {trackName}</h3>
           <button className={danger} onClick={onClose}>
             Close
           </button>
         </div>
 
-        <label className="flex flex-col gap-1 text-xs text-ink-faint mb-4">
-          Start from preset
-          <select className={field} defaultValue="" onChange={(e) => applyPreset(e.target.value)}>
-            <option value="">— custom —</option>
-            {Object.keys(PRESET_TUNINGS).map((name) => (
-              <option key={name} value={name}>
-                {presetLabel(name)}
-              </option>
+        <div className={`${sectionLabel} mb-1`}>Tuning</div>
+        <div className="flex flex-col gap-1 border-t border-hairline pt-2 mb-5">
+          <div className="flex gap-0.5">
+            {(['Guitar', 'Bass'] as const).map((inst) => (
+              <button
+                key={inst}
+                className={chip(instrument === inst)}
+                onClick={() => {
+                  setInstrument(inst)
+                  if (!TUNING_TYPES[inst].includes(type)) setType('Standard')
+                }}
+              >
+                {inst}
+              </button>
             ))}
-          </select>
-        </label>
+          </div>
+          <div className="flex gap-0.5">
+            {TUNING_TYPES[instrument].map((t) => (
+              <button key={t} className={chip(type === t)} onClick={() => setType(t)}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-0.5">
+            {rootsFor(type).map((root) => (
+              <button
+                key={root}
+                className={'font-mono ' + chip(activeRoot === root)}
+                onClick={() => onChange(presetToTuning(tuningMidisFor(instrument, type, root)))}
+              >
+                {NOTE_NAMES[root]}
+              </button>
+            ))}
+          </div>
+        </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between mb-1">
+          <span className={sectionLabel}>Strings</span>
+          <span className={`flex items-center gap-0.5 ${sectionLabel}`}>
+            transpose
+            <button className={stepBtn} onClick={() => stepAll(-1)}>
+              −
+            </button>
+            <button className={stepBtn} onClick={() => stepAll(1)}>
+              +
+            </button>
+          </span>
+        </div>
+        <div className="flex flex-col border-t border-hairline">
           {tuning.map((s, i) => (
-            <div className="flex items-center gap-1.5" key={i}>
-              <span className="w-10 text-xs uppercase text-ink-faint font-mono">
+            <div className="flex items-center gap-1 px-1 py-1 border-b border-hairline" key={i}>
+              <span className="w-12 shrink-0 text-[11px] uppercase tracking-wide text-ink-faint font-mono">
                 {i === 0 ? 'top' : i === tuning.length - 1 ? 'bottom' : i + 1}
               </span>
-              <select className={field} value={s.noteIndex} onChange={(e) => updateString(i, 'noteIndex', Number(e.target.value))}>
-                {NOTE_NAMES.map((n, idx) => (
-                  <option key={n} value={idx}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-              <input
-                className={`${field} w-14`}
-                type="number"
-                min={0}
-                max={8}
-                value={s.octave}
-                onChange={(e) => updateString(i, 'octave', Number(e.target.value))}
-              />
+              <button className={stepBtn} title="Semitone down" onClick={() => stepString(i, -1)} disabled={midiOf(s) <= MIN_MIDI}>
+                −
+              </button>
+              <span className="w-10 text-center font-mono text-sm text-ink">
+                {NOTE_NAMES[s.noteIndex]}
+                {s.octave}
+              </span>
+              <button className={stepBtn} title="Semitone up" onClick={() => stepString(i, 1)} disabled={midiOf(s) >= MAX_MIDI}>
+                +
+              </button>
+              <span className="flex-1" />
               <button className={btn} title="Move up" onClick={() => moveString(i, -1)} disabled={i === 0}>
                 ↑
               </button>

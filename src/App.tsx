@@ -483,6 +483,10 @@ export default function App() {
         isAutosaved={!dirty}
         onLoad={loadSongFromLibrary}
         onDelete={deleteSongFromLibrary}
+        onMove={(id, dir) => {
+          storage.moveSong(id, dir)
+          setLibrarySongs(storage.listSongs())
+        }}
         onNew={newSong}
         onSave={handleSave}
         onExport={exportLibrary}

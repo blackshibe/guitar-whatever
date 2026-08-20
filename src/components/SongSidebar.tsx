@@ -8,17 +8,18 @@ interface Props {
   isAutosaved: boolean
   onLoad: (id: string) => void
   onDelete: (id: string) => void
+  onMove: (id: string, dir: -1 | 1) => void
   onNew: () => void
   onSave: () => void
   onExport: () => void
   onImport: (file: File) => void
 }
 
-const btn = 'text-ink-soft hover:text-ink text-xs px-2 py-1.5 border-b border-transparent hover:border-hairline-strong'
+const btn = 'btn text-xs px-2 py-1.5'
 const danger = 'text-ink-soft hover:text-accent text-xs px-2 py-1'
 const saveBtn = 'bg-accent text-accent-ink text-xs font-medium px-2.5 py-1.5 hover:opacity-90'
 
-export default function SongSidebar({ songs, currentSongId, isAutosaved, onLoad, onDelete, onNew, onSave, onExport, onImport }: Props) {
+export default function SongSidebar({ songs, currentSongId, isAutosaved, onLoad, onDelete, onMove, onNew, onSave, onExport, onImport }: Props) {
   const isSaved = songs.some((s) => s.id === currentSongId)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -73,17 +74,41 @@ export default function SongSidebar({ songs, currentSongId, isAutosaved, onLoad,
         <p className="text-xs text-ink-faint">Nothing saved yet — hit Save to store the current song here.</p>
       ) : (
         <div className="flex flex-col">
-          {songs.map((song) => (
+          {songs.map((song, idx) => (
             <div
               key={song.id}
               className={
-                'border-b border-hairline px-1 py-2.5 cursor-pointer ' +
+                'group border-b border-hairline px-1 py-2.5 cursor-pointer ' +
                 (song.id === currentSongId ? 'bg-plate border-l-2 border-l-accent pl-2' : 'hover:bg-plate/60')
               }
               onClick={() => onLoad(song.id)}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 text-sm text-ink truncate font-medium">{song.title || 'Untitled Song'}</div>
+                <span className="flex shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    className="text-ink-soft hover:text-ink text-xs px-1 disabled:opacity-30"
+                    title="Move up"
+                    disabled={idx === 0}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onMove(song.id, -1)
+                    }}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    className="text-ink-soft hover:text-ink text-xs px-1 disabled:opacity-30"
+                    title="Move down"
+                    disabled={idx === songs.length - 1}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onMove(song.id, 1)
+                    }}
+                  >
+                    ↓
+                  </button>
+                </span>
                 <button
                   className={`${danger} shrink-0`}
                   onClick={(e) => {

@@ -4,6 +4,7 @@ import { sectionRangesFor } from './songOps'
 
 const LIBRARY_KEY = 'tab-editor:songs'
 const LAST_OPENED_KEY = 'tab-editor:last-opened'
+const ORDER_KEY = 'tab-editor:song-order'
 
 // Section.linkTo and Track.loops are live, reducer-driven features now.
 // Only the old global per-section `repeat` has no live equivalent; migrateSong
@@ -37,13 +38,49 @@ export function deleteSong(id: string): void {
   const lib = readLibrary()
   delete lib[id]
   writeLibrary(lib)
+  const order = readOrder()
+  if (order.includes(id)) writeOrder(order.filter((x) => x !== id))
   if (localStorage.getItem(LAST_OPENED_KEY) === id) {
     localStorage.removeItem(LAST_OPENED_KEY)
   }
 }
 
+// Manual library order: ids in ORDER_KEY come first in that order; songs the
+// user has never moved trail behind them, newest first.
+function readOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(ORDER_KEY)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+function writeOrder(order: string[]): void {
+  localStorage.setItem(ORDER_KEY, JSON.stringify(order))
+}
+
 export function listSongs(): Song[] {
-  return Object.values(readLibrary()).sort((a, b) => b.updatedAt - a.updatedAt)
+  const pos = new Map(readOrder().map((id, i) => [id, i]))
+  return Object.values(readLibrary()).sort((a, b) => {
+    const pa = pos.get(a.id)
+    const pb = pos.get(b.id)
+    if (pa != null && pb != null) return pa - pb
+    if (pa != null) return -1
+    if (pb != null) return 1
+    return b.updatedAt - a.updatedAt
+  })
+}
+
+// Swap a song with its neighbor in the current visual order and pin the
+// whole snapshot as the manual order from then on.
+export function moveSong(id: string, dir: -1 | 1): void {
+  const ids = listSongs().map((s) => s.id)
+  const i = ids.indexOf(id)
+  const j = i + dir
+  if (i === -1 || j < 0 || j >= ids.length) return
+  ;[ids[i], ids[j]] = [ids[j], ids[i]]
+  writeOrder(ids)
 }
 
 // Legacy global `repeat` becomes written-out measures plus an equivalent

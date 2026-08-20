@@ -27,11 +27,11 @@ export default function SectionNav({ sectionRanges, activeSectionId, canPaste, o
 
   const gap = (m: number, key: string) => (
     <span key={key} className="flex items-center opacity-0 hover:opacity-100 focus-within:opacity-100 transition-opacity">
-      <button className="text-ink-faint hover:text-ink text-xs px-1 py-1.5" title="Insert section here" onClick={() => onAddAt(m)}>
+      <button className="text-ink-soft hover:text-ink text-xs px-1 py-1.5" title="Insert section here" onClick={() => onAddAt(m)}>
         +
       </button>
       {canPaste && (
-        <button className="text-ink-faint hover:text-accent text-xs px-1 py-1.5" title="Paste copied section here" onClick={() => onPasteAt(m)}>
+        <button className="text-ink-soft hover:text-accent text-xs px-1 py-1.5" title="Paste copied section here" onClick={() => onPasteAt(m)}>
           <InsertIcon />
         </button>
       )}
@@ -54,8 +54,10 @@ export default function SectionNav({ sectionRanges, activeSectionId, canPaste, o
             <span className="relative flex flex-col items-stretch">
               <button
                 className={
-                  'text-xs px-2.5 py-1.5 border-b-2 ' +
-                  (sec.id === activeSectionId ? 'bg-plate-raised text-ink border-accent' : 'text-ink-soft hover:text-ink border-transparent')
+                  'text-xs px-2.5 py-1.5 bg-plate-sunken border border-b-2 transition-colors ' +
+                  (sec.id === activeSectionId
+                    ? 'border-hairline-strong border-b-accent text-ink'
+                    : 'border-hairline-strong text-ink-soft hover:text-ink hover:border-ink-faint')
                 }
                 style={inGroup ? { borderBottomColor: tieColor(sec.colorIndex) } : undefined}
                 onClick={() => onJump(sec.id)}
@@ -65,7 +67,7 @@ export default function SectionNav({ sectionRanges, activeSectionId, canPaste, o
                 {sec.name}
               </button>
               <button
-                className="text-[11px] leading-none py-0.5 text-ink-faint hover:text-accent"
+                className="text-[11px] leading-none py-0.5 text-ink-soft hover:text-accent"
                 title={linked ? 'Unlink section' : 'Link to another section'}
                 onClick={(e) => {
                   e.stopPropagation()

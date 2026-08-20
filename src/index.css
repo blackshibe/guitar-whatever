@@ -66,6 +66,42 @@
   * {
     scrollbar-color: var(--color-hairline-strong) var(--color-plate);
   }
+
+  /* Native number-input spinners clash with the flat underline fields. */
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+}
+
+@layer components {
+  /* A button reads as a struck key, not bare text: one tonal step lighter
+     than its ground, a hairline edge, full-ink label. Transparent text-only
+     "ghost" buttons were rejected in review — background-colored interaction
+     items read as poor-contrast non-buttons. */
+  .btn {
+    background-color: var(--color-plate-sunken);
+    border: 1px solid var(--color-hairline-strong);
+    color: var(--color-ink);
+    transition-property: color, border-color, background-color, opacity;
+    transition-duration: 150ms;
+  }
+  .btn:hover:not(:disabled) {
+    border-color: var(--color-ink-faint);
+  }
+  .btn:disabled {
+    opacity: 0.35;
+  }
+  .btn-danger:hover:not(:disabled) {
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
 }
 
 * {

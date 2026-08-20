@@ -31,8 +31,8 @@ interface Props {
   registerSectionRef: (id: number, el: HTMLDivElement | null) => void
 }
 
-const headerBtn = 'text-ink-faint hover:text-ink text-xs px-2 py-1.5 border-b border-transparent hover:border-hairline-strong'
-const dangerHeaderBtn = 'text-ink-faint hover:text-accent text-xs px-2 py-1.5 border-b border-transparent hover:border-accent/40'
+const headerBtn = 'btn text-xs px-2 py-1'
+const dangerHeaderBtn = 'btn btn-danger text-xs px-2 py-1'
 const CELL_W = 28
 
 export default function TabGrid({
@@ -101,21 +101,23 @@ export default function TabGrid({
     )
   }
 
-  // Left margin (40px note-name column + 14px opening bar) plus one measure
-  // block (CELL_W*8 cells + 14px trailing bar) per line, repeated per measure
-  // index — the geometry the playhead overlay glides across.
+  // Left margin (40px note-name column + 6px gap + 14px opening bar) plus one
+  // measure block (CELL_W*8 cells + 14px trailing bar) per line, repeated per
+  // measure index — the geometry every row shares (header, annotation, and
+  // string rows all use the same stride so nothing drifts), and the geometry
+  // the playhead overlay glides across.
   const playheadLeft = (lineMeasures: number[]): number | null => {
     if (!playhead) return null
     const mi = lineMeasures.indexOf(playhead.m)
     if (mi === -1) return null
-    return 54 + mi * (CELL_W * COLS_PER_MEASURE + 14) + playhead.c * CELL_W
+    return 60 + mi * (CELL_W * COLS_PER_MEASURE + 14) + playhead.c * CELL_W
   }
 
   return (
     <div
       ref={gridRef}
       data-grid
-      className={`outline-none overflow-x-auto bg-plate border border-hairline-strong p-5 ${className}`}
+      className={`outline-none overflow-x-auto ${className}`}
       onKeyDown={onKeyDown}
       tabIndex={0}
     >
@@ -127,7 +129,7 @@ export default function TabGrid({
 
         return (
           <div
-            className="border-l-[3px] border-hairline-strong pl-3.5 mt-4 first:mt-0 mb-3 scroll-mt-[190px]"
+            className="min-w-fit bg-plate-raised border border-hairline-strong border-l-[3px] p-4 mt-4 first:mt-0 mb-3 scroll-mt-[190px]"
             key={sec.id}
             ref={(el) => registerSectionRef(sec.id, el)}
           >
@@ -195,16 +197,20 @@ export default function TabGrid({
                 data-line-start={lineMeasures[0]}
                 data-line-end={lineMeasures[lineMeasures.length - 1]}
               >
+                {/* Header + annotation rows share the string rows' exact
+                    stride (one 14px barline slot between measures, not two)
+                    so measure numbers and notes stay over their measures. */}
                 <div className="flex items-center">
-                  <span className="w-10 shrink-0" />
+                  <span className="w-10 shrink-0 mr-1.5" />
+                  <span className="w-3.5 shrink-0 text-center text-ink-faint">
+                    {loopUnit != null && lineMeasures[0] === sec.startMeasure ? '𝄆' : ''}
+                  </span>
                   {lineMeasures.map((m) => {
                     const off = m - sec.startMeasure
                     const mirrored = loopUnit != null && off >= loopUnit
-                    const unitStart = loopUnit != null && off === 0
                     const unitEnd = loopUnit != null && off === Math.min(loopUnit, span) - 1
                     return (
                       <div className="flex items-center shrink-0" key={m}>
-                        <span className="w-3.5 shrink-0 text-center text-ink-faint">{unitStart ? '𝄆' : ''}</span>
                         <span
                           className={
                             'flex items-center gap-1 shrink-0 text-xs font-mono ' + (mirrored ? 'text-ink-faint/70' : 'text-ink-faint')
@@ -214,7 +220,7 @@ export default function TabGrid({
                           #{m + 1}
                           {measureCount > 1 && (
                             <button
-                              className="bg-transparent hover:text-accent text-ink-faint px-1.5 leading-none"
+                              className="bg-transparent hover:text-accent text-ink-soft px-1.5 leading-none"
                               onClick={() => onDeleteMeasure(m)}
                               title="Delete measure"
                             >
@@ -222,17 +228,17 @@ export default function TabGrid({
                             </button>
                           )}
                         </span>
-                        <span className="w-3.5 shrink-0 text-center text-ink-faint">{unitEnd && !unitStart ? '𝄇' : ''}</span>
+                        <span className="w-3.5 shrink-0 text-center text-ink-faint">{unitEnd ? '𝄇' : ''}</span>
                       </div>
                     )
                   })}
                 </div>
 
                 <div className="flex items-center mb-1">
-                  <span className="w-10 shrink-0" />
+                  <span className="w-10 shrink-0 mr-1.5" />
+                  <span className="w-3.5 shrink-0" />
                   {lineMeasures.map((m) => (
                     <div className="flex items-center shrink-0" key={m}>
-                      <span className="w-3.5 shrink-0" />
                       <input
                         className="bg-transparent border-b border-hairline focus:border-accent outline-none text-[11px] text-ink-soft placeholder-ink-faint/70 px-0.5"
                         style={{ width: CELL_W * COLS_PER_MEASURE }}

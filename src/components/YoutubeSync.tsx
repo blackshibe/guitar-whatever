@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { YoutubeSync } from '../types'
 import { extractVideoId, loadYouTubeApi } from '../lib/youtube'
-import { CloseIcon } from './Icons'
+import { CloseIcon, ExpandIcon, ShrinkIcon } from './Icons'
 
 interface Props {
   youtube: YoutubeSync | undefined
@@ -29,18 +29,24 @@ interface YTPlayerInstance {
 type YTNamespace = {
   Player: new (
     el: HTMLElement,
-    opts: { videoId: string; playerVars?: Record<string, unknown>; events?: { onReady?: () => void } }
+    opts: {
+      videoId: string
+      width?: string
+      height?: string
+      playerVars?: Record<string, unknown>
+      events?: { onReady?: () => void }
+    }
   ) => YTPlayerInstance
 }
 
-// A floating reference-video widget pinned to the corner — Songsterr keeps
-// transport at the bottom, so the video lives in the opposite corner rather
-// than competing with either the score or the transport bar.
+// A floating reference-video widget pinned to the bottom-right corner,
+// offset above the fixed transport bar so the two never overlap.
 const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSyncPanel(
   { youtube, anchorMeasure, onSetVideo, onSetAnchor },
   ref
 ) {
   const [collapsed, setCollapsed] = useState(false)
+  const [large, setLarge] = useState(false)
   const [addingUrl, setAddingUrl] = useState(false)
   const [urlInput, setUrlInput] = useState('')
   const [status, setStatus] = useState('')
@@ -56,8 +62,12 @@ const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSy
       const YT = (window as unknown as { YT: YTNamespace }).YT
       playerRef.current?.destroy()
       setReady(false)
+      // 100% width/height so the iframe fills the widget at any size —
+      // without it the API mints a fixed 640×360 iframe.
       playerRef.current = new YT.Player(mountRef.current, {
         videoId: youtube.videoId,
+        width: '100%',
+        height: '100%',
         playerVars: { playsinline: 1 },
         events: { onReady: () => setReady(true) },
       })
@@ -105,12 +115,11 @@ const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSy
     setTimeout(() => setStatus(''), 2000)
   }
 
-  // Below md the sidebar stacks full-width, so its own top-right "+ New"
-  // lives at the same viewport corner this widget wants — drop out of
-  // fixed-corner mode there and flow inline instead of covering it.
+  // Below md there's no room for a fixed corner widget above the transport
+  // bar — drop out of fixed mode there and flow inline instead.
   if (!youtube) {
     return (
-      <div data-keep-selection className="mx-5 my-3 md:m-0 md:fixed md:top-4 md:right-4 md:z-40 flex justify-end">
+      <div data-keep-selection className="mx-5 my-3 md:m-0 md:fixed md:bottom-16 md:right-4 md:z-40 flex justify-end">
         {addingUrl ? (
           <div className="bg-plate-raised border border-hairline-strong p-2.5 flex items-center gap-2 shadow-[0_6px_16px_rgba(0,0,0,0.4)]">
             <input
@@ -124,14 +133,14 @@ const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSy
                 if (e.key === 'Escape') setAddingUrl(false)
               }}
             />
-            <button className="text-ink-soft hover:text-ink text-xs border-b border-hairline-strong hover:border-accent px-0.5" onClick={attach}>
+            <button className="btn text-xs px-2 py-1" onClick={attach}>
               Attach
             </button>
             {status && <span className="text-xs text-accent">{status}</span>}
           </div>
         ) : (
           <button
-            className="bg-plate-raised border border-hairline-strong text-ink-soft hover:text-ink text-xs font-medium px-3 py-2 shadow-[0_6px_16px_rgba(0,0,0,0.4)]"
+            className="btn text-xs font-medium px-3 py-2 shadow-[0_6px_16px_rgba(0,0,0,0.4)]"
             onClick={() => setAddingUrl(true)}
           >
             + Reference video
@@ -144,13 +153,22 @@ const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSy
   return (
     <div
       data-keep-selection
-      className="w-[280px] max-w-[calc(100vw-2.5rem)] ml-auto mr-5 my-3 md:m-0 md:fixed md:top-4 md:right-4 md:z-40 md:w-64 bg-plate-raised border border-hairline-strong shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+      className={`${large ? 'w-[640px]' : 'w-96'} max-w-[calc(100vw-2.5rem)] ml-auto mr-5 my-3 md:m-0 md:fixed md:bottom-16 md:right-4 md:z-40 bg-plate-raised border border-hairline-strong shadow-[0_10px_24px_rgba(0,0,0,0.45)]`}
     >
       <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-hairline">
         <button className="text-ink-soft hover:text-ink text-[11px] font-medium uppercase tracking-wide flex-1 text-left truncate" onClick={() => setCollapsed((v) => !v)}>
           {collapsed ? '▸' : '▾'} Reference video
         </button>
-        <button className="text-ink-faint hover:text-accent text-[11px] px-1" onClick={() => onSetVideo(null)} title="Remove video">
+        {!collapsed && (
+          <button
+            className="text-ink-soft hover:text-ink text-[13px] px-1"
+            onClick={() => setLarge((v) => !v)}
+            title={large ? 'Smaller' : 'Larger'}
+          >
+            {large ? <ShrinkIcon /> : <ExpandIcon />}
+          </button>
+        )}
+        <button className="text-ink-soft hover:text-accent text-[13px] px-1" onClick={() => onSetVideo(null)} title="Remove video">
           <CloseIcon />
         </button>
       </div>
@@ -161,7 +179,7 @@ const YoutubeSyncPanel = forwardRef<YoutubeSyncHandle, Props>(function YoutubeSy
           </div>
           <div className="flex items-center gap-2 px-2 py-1.5">
             <button
-              className="text-ink-soft hover:text-accent text-[11px] border-b border-hairline-strong hover:border-accent px-0.5 disabled:opacity-40"
+              className="btn text-[11px] px-2 py-1"
               onClick={syncHere}
               disabled={!ready}
             >

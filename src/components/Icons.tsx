@@ -60,6 +60,24 @@ export function InsertIcon({ className = '' }: IconProps) {
   )
 }
 
+export function ExpandIcon({ className = '' }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" className={`${base} ${className}`} {...strokeProps}>
+      <path d="M9.5 2.5 H13.5 V6.5 M13.5 2.5 L9.2 6.8" />
+      <path d="M6.5 13.5 H2.5 V9.5 M2.5 13.5 L6.8 9.2" />
+    </svg>
+  )
+}
+
+export function ShrinkIcon({ className = '' }: IconProps) {
+  return (
+    <svg viewBox="0 0 16 16" className={`${base} ${className}`} {...strokeProps}>
+      <path d="M13.8 2.2 L9.6 6.4 M9.6 3.2 V6.4 H12.8" />
+      <path d="M2.2 13.8 L6.4 9.6 M6.4 12.8 V9.6 H3.2" />
+    </svg>
+  )
+}
+
 export function CloseIcon({ className = '' }: IconProps) {
   return (
     <svg viewBox="0 0 16 16" className={`${base} ${className}`} {...strokeProps}>

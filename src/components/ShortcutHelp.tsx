@@ -18,7 +18,7 @@ export default function ShortcutHelp() {
   return (
     <div className="relative">
       <button
-        className="text-ink-soft hover:text-ink text-sm px-3 py-2.5"
+        className="btn text-sm px-2.5 py-1.5"
         onClick={() => setOpen((v) => !v)}
         title="Keyboard shortcuts"
       >

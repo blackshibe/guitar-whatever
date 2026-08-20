@@ -33,11 +33,10 @@ export default function TrackTabs({ tracks, activeTrackId, onSelect, onRename, o
                 (t.id === activeTrackId ? 'text-ink font-medium' : 'text-ink-soft')
               }
               value={t.name}
-              onClick={(e) => e.stopPropagation()}
               onChange={(e) => onRename(t.id, e.target.value)}
             />
             <button
-              className="text-ink-faint hover:text-ink text-sm px-1.5 py-0.5"
+              className="text-ink-soft hover:text-ink text-sm px-1.5 py-0.5"
               title="Edit tuning"
               onClick={(e) => {
                 e.stopPropagation()
@@ -48,7 +47,7 @@ export default function TrackTabs({ tracks, activeTrackId, onSelect, onRename, o
             </button>
             {tracks.length > 1 && (
               <button
-                className="text-ink-faint hover:text-accent text-sm px-1.5 py-0.5"
+                className="text-ink-soft hover:text-accent text-sm px-1.5 py-0.5"
                 title="Remove track"
                 onClick={(e) => {
                   e.stopPropagation()
@@ -60,7 +59,7 @@ export default function TrackTabs({ tracks, activeTrackId, onSelect, onRename, o
             )}
           </div>
         ))}
-        <button className="text-ink-faint hover:text-ink border-b-2 border-transparent hover:border-hairline-strong text-sm px-3 py-1.5" onClick={onAdd}>
+        <button className="text-ink-soft hover:text-ink border-b-2 border-transparent hover:border-hairline-strong text-sm px-3 py-1.5" onClick={onAdd}>
           + Track
         </button>
       </div>
